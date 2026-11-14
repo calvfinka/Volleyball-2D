@@ -8,26 +8,32 @@ Game voli aksi tampak samping, HTML + CSS + JavaScript ES Modules murni, tanpa b
 - Lokal: `python3 -m http.server 8000` lalu buka `http://localhost:8000`.
 - GitHub Pages: upload isi zip ke root repo (`index.html` harus di root), aktifkan Pages dari branch utama.
 
+## Tes
+
+- Tes logika (Node, tanpa browser), dari root repo: `node tests/game.test.mjs`. Tes ini memeriksa aturan poin, balistik, pelanggaran sentuhan, dan bahwa 40 laga AI lawan AI selalu selesai.
+- Tes ini harus lulus sebelum setiap push.
+
 ## Struktur
 
 ```
 index.html              markup, canvas, overlay putar, kontrol sentuh
 css/style.css           layout, safe-area, kontrol sentuh, media pendek
+tests/game.test.mjs      tes logika (node tests/game.test.mjs)
 js/main.js              bootstrap: skala canvas, orientasi, fullscreen, loop
-js/inti/
+js/core/
   konstanta.js          SEMUA angka yang bisa disetel
   loop.js               loop tetap 60 langkah/detik
   layar.js              pengelola layar (satu aktif)
   input.js              keyboard + sentuh, buffer tekan
   audio.js              suara WebAudio (tanpa file)
   simpan.js             localStorage + nomor versi + migrasi
-js/permainan/           logika murni, tanpa DOM
+js/game/           logika murni, tanpa DOM
   fisika.js             bola: gravitasi, dinding, jaring, lantai, waktuKe()
   pemain.js             gerak, lompat, titik tangan
   aturan.js             pemenang poin, cek pelanggaran sentuhan
   ai.js                 niat AI (arah, lompat, aksi)
   laga.js               class Laga: servis, rally, sentuhan, poin, fase
-js/layar/               render dan UI
+js/screen/               render dan UI
   menu.js, pengaturan.js, laga.js (+ jeda dan hasil)
   gambar.js             latar, jaring, pemain, bola, HUD
   ui.js                 tombol, teks, helper hit-test
@@ -38,7 +44,7 @@ js/data/
 
 ## Keputusan desain
 
-- **State dipisah dari render.** `js/permainan/` tidak menyentuh DOM atau canvas, sehingga bisa diuji di Node. Layar hanya membaca state dan menggambarnya.
+- **State dipisah dari render.** `js/game/` tidak menyentuh DOM atau canvas, sehingga bisa diuji di Node. Layar hanya membaca state dan menggambarnya.
 - **Balistik, bukan tebakan.** Setiap sentuhan menghitung kecepatan horizontal dari target dengan `waktuKe()`, sehingga smash benar-benar jatuh di titik target. Error target dihitung dari statistik dan kualitas timing.
 - **Timing smash.** Kualitas timing = kedekatan `vy` pemain ke nol, yaitu puncak lompatan. Makin dekat puncak, makin akurat dan kuat smash.
 - **Statistik berpengaruh:** `smash` mengatur daya dan akurasi, `terima` mengatur akurasi terima dan umpan, `blok` mengatur kekuatan pantulan, `servis` mengatur akurasi servis, dan `kecepatan` mengatur gerak serta lompatan.
@@ -49,7 +55,7 @@ js/data/
 - **Penyimpanan.** `localStorage` key `volleyball2d`, berisi `versi`, `suara`, dan `kesulitan`. Fungsi `migrasi()` di `simpan.js` menjadi tempat konversi saat versi naik.
 - **Kesulitan AI.** Mudah 0.6, Normal 0.8, Sulit 1.0. Nilai ini memengaruhi peluang bereaksi AI.
 
-## Konstanta yang bisa disetel (`js/inti/konstanta.js`)
+## Konstanta yang bisa disetel (`js/core/konstanta.js`)
 
 | Konstanta | Nilai | Fungsi |
 |---|---|---|
@@ -67,7 +73,7 @@ js/data/
 | `SERVIS_TUNDA_AI` | 0.9 | Waktu sebelum AI servis (detik). |
 | `BOLA_MAKS` | 1400 | Batas kecepatan bola (px/s). |
 
-Konstanta lain di `js/permainan/laga.js` dan `js/permainan/ai.js`: kecepatan target smash (`vy` dan `err`), kecepatan terima dan set (`vy` -560 dan -980), kecepatan servis (`vy` -620), dan ambang reaksi AI.
+Konstanta lain di `js/game/laga.js` dan `js/game/ai.js`: kecepatan target smash (`vy` dan `err`), kecepatan terima dan set (`vy` -560 dan -980), kecepatan servis (`vy` -620), dan ambang reaksi AI.
 
 ## Status uji
 

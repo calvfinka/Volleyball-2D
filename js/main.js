@@ -1,14 +1,14 @@
 // Bootstrap: canvas 1280x720 diskalakan memenuhi layar, layar penuh, orientasi, dan loop utama.
-import { K } from './inti/konstanta.js';
-import { mulaiLoop } from './inti/loop.js';
-import { layar } from './inti/layar.js';
-import { input, pasangSentuh } from './inti/input.js';
-import { pengaturan } from './inti/simpan.js';
-import { setSuara } from './inti/audio.js';
-import { buatMenu, R_FULL } from './layar/menu.js';
-import { buatPengaturan } from './layar/pengaturan.js';
-import { buatLayarLaga } from './layar/laga.js';
-import { diDalam } from './layar/ui.js';
+import { K } from './core/konstanta.js';
+import { mulaiLoop } from './core/loop.js';
+import { layar } from './core/layar.js';
+import { input, pasangSentuh } from './core/input.js';
+import { pengaturan } from './core/simpan.js';
+import { setSuara } from './core/audio.js';
+import { buatMenu, R_FULL } from './screen/menu.js';
+import { buatPengaturan } from './screen/pengaturan.js';
+import { buatLayarLaga } from './screen/laga.js';
+import { diDalam } from './screen/ui.js';
 
 const kanvas = document.getElementById('kanvas');
 const ctx = kanvas.getContext('2d');

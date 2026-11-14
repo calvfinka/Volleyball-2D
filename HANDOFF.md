@@ -1,93 +1,64 @@
-# HANDOFF — Volleyball 2D
+# Volleyball 2D — Handoff & Architecture Guide
 
-Game voli aksi tampak samping, HTML + CSS + JavaScript ES Modules murni, tanpa build tool dan tanpa framework. Dirender di `<canvas>` 2D beresolusi logis 1280x720 yang diskalakan memenuhi layar. Semua grafis dan suara dibuat dengan kode.
+## 1. Project Structure
 
-## Menjalankan
+Pure static HTML + CSS + JavaScript ES Modules designed for direct GitHub Pages deployment with zero build steps, zero frameworks, and zero external assets.
 
-- Modul ES harus dibuka lewat HTTP, tidak bisa lewat `file://`.
-- Lokal: `python3 -m http.server 8000` lalu buka `http://localhost:8000`.
-- GitHub Pages: upload isi zip ke root repo (`index.html` harus di root), aktifkan Pages dari branch utama.
-
-## Tes
-
-- Tes logika (Node, tanpa browser), dari root repo: `node tests/game.test.mjs`. Tes ini memeriksa aturan poin, balistik, pelanggaran sentuhan, dan bahwa 40 laga AI lawan AI selalu selesai.
-- Tes ini harus lulus sebelum setiap push.
-
-## Struktur
-
-```
-index.html              markup, canvas, overlay putar, kontrol sentuh
-css/style.css           layout, safe-area, kontrol sentuh, media pendek
-tests/game.test.mjs      tes logika (node tests/game.test.mjs)
-js/main.js              bootstrap: skala canvas, orientasi, fullscreen, loop
-js/core/
-  konstanta.js          SEMUA angka yang bisa disetel
-  loop.js               loop tetap 60 langkah/detik
-  layar.js              pengelola layar (satu aktif)
-  input.js              keyboard + sentuh, buffer tekan
-  audio.js              suara WebAudio (tanpa file)
-  simpan.js             localStorage + nomor versi + migrasi
-js/game/           logika murni, tanpa DOM
-  fisika.js             bola: gravitasi, dinding, jaring, lantai, waktuKe()
-  pemain.js             gerak, lompat, titik tangan
-  aturan.js             pemenang poin, cek pelanggaran sentuhan
-  ai.js                 niat AI (arah, lompat, aksi)
-  laga.js               class Laga: servis, rally, sentuhan, poin, fase
-js/screen/               render dan UI
-  menu.js, pengaturan.js, laga.js (+ jeda dan hasil)
-  gambar.js             latar, jaring, pemain, bola, HUD
-  ui.js                 tombol, teks, helper hit-test
-js/data/
-  statistik.js          statistik pemain (smash, terima, blok, servis, kecepatan)
-  tim.js                tim dan urutan pemain [penyerang, pengumpan]
+```text
+/
+├── index.html             # Viewport shell, SVG title emblem, HUD, touch controls, modals, portrait overlay
+├── css/
+│   └── style.css          # Landscape-first responsive UI, safe-area padding, touch pad, portrait fallback
+├── js/
+│   ├── main.js            # Entry point wiring core services, screens, and 60fps loop
+│   ├── core/
+│   │   ├── audio.js       # Procedural WebAudio sound effects (serve, receive, set, smash, block, whistle)
+│   │   ├── input.js       # Unified keyboard (Arrows + Space) + Touch virtual joystick & action buttons
+│   │   ├── loop.js        # Clamped delta-time requestAnimationFrame loop
+│   │   ├── save.js        # Versioned localStorage persistence (v1) + v0->v1 migration
+│   │   └── screen.js      # Screen/modal state machine + landscape fullscreen orientation lock helper
+│   ├── data/
+│   │   └── stats.js       # 2v2 team rosters and stat-to-physics modifiers (smash, receive, block, serve)
+│   ├── game/
+│   │   ├── ai.js          # Teammate auto-feed AI & Away opponent 2v2 AI
+│   │   ├── ball.js        # Ball kinematics, net/floor collision, and landing prediction
+│   │   ├── player.js      # Player physics, jump buffering, variable jump cut, squash & stretch
+│   │   ├── renderer.js    # Canvas 2D renderer (1280x720 logical space, cached offscreen backdrop, particles)
+│   │   └── rules.js       # 2v2 rules: serve, receive, auto-feed, smash timing, block, rally point to 15
+│   └── screen/
+│       ├── match.js       # In-match HUD sync, pause/result modals, audio event dispatch
+│       ├── menu.js        # Main menu roster stats display and record readout
+│       └── settings.js    # Sound, touch controls mode, difficulty, and record reset
+└── HANDOFF.md
 ```
 
-## Keputusan desain
+## 2. Design Decisions
 
-- **State dipisah dari render.** `js/game/` tidak menyentuh DOM atau canvas, sehingga bisa diuji di Node. Layar hanya membaca state dan menggambarnya.
-- **Balistik, bukan tebakan.** Setiap sentuhan menghitung kecepatan horizontal dari target dengan `waktuKe()`, sehingga smash benar-benar jatuh di titik target. Error target dihitung dari statistik dan kualitas timing.
-- **Timing smash.** Kualitas timing = kedekatan `vy` pemain ke nol, yaitu puncak lompatan. Makin dekat puncak, makin akurat dan kuat smash.
-- **Statistik berpengaruh:** `smash` mengatur daya dan akurasi, `terima` mengatur akurasi terima dan umpan, `blok` mengatur kekuatan pantulan, `servis` mengatur akurasi servis, dan `kecepatan` mengatur gerak serta lompatan.
-- **Aturan.** Rally point sampai 15 dengan selisih minimal 2. Maksimal 3 sentuhan per sisi, tidak boleh dua sentuhan berturut oleh pemain yang sama, bola menyentuh jaring atau lantai langsung menghasilkan poin. Blok tidak dihitung sebagai sentuhan tim.
-- **Kontrol.** Di desktop: panah (gerak), Spasi/↑ (lompat), Z/K (smash), X/J/Enter (terima atau servis), Esc/P (jeda). Di HP: joystick kiri, tombol kanan. Tombol terima berubah menjadi "Servis" saat pemain kita yang servis.
-- **Input buffer.** Smash dan terima dicatat waktunya (170 ms) sehingga tekanan yang sedikit terlambat tetap diterima saat bola sudah dalam jangkauan.
-- **Orientasi.** Di portrait ditampilkan overlay "Putar HP", dan permainan dijeda. Sentuhan pertama mencoba fullscreen dan `screen.orientation.lock('landscape')`. Bila gagal, overlay tetap berfungsi sebagai fallback.
-- **Penyimpanan.** `localStorage` key `volleyball2d`, berisi `versi`, `suara`, dan `kesulitan`. Fungsi `migrasi()` di `simpan.js` menjadi tempat konversi saat versi naik.
-- **Kesulitan AI.** Mudah 0.6, Normal 0.8, Sulit 1.0. Nilai ini memengaruhi peluang bereaksi AI.
+- **Pure DOM-Free Simulation**: Everything inside `js/game/` and `js/data/` operates purely on state objects with zero DOM or Canvas references, making rules/physics unit-testable in Node and portable.
+- **Logical 1280x720 Uniform Scaling**: `renderer.js` scales the 1280x720 court uniformly into the live viewport (`Math.min(viewW / 1280, viewH / 720)`) and paints seamless sky/floor-apron wings on wider mobile aspect ratios (such as `844x390`) so circles and characters never stretch.
+- **Mobile 60 FPS Performance**: Static sky, bleachers, and court markings are cached once onto an offscreen canvas (`bgCanvas`). Particles use a pre-allocated 48-slot ring buffer to prevent GC spikes during rallies. No CSS `backdrop-filter` is used over the canvas.
+- **2v2 Auto-Feed Flow**: Touch 1 (`Receive`) pops the ball cleanly to the setter (`Mina`), who automatically sets Touch 2 (`AUTO-FEED!`) into the attack lane with a smash timing ring, letting the human player focus on jump timing and `Smash` execution (while still allowing quick Touch 2 hits).
+- **Landscape Enforcement**: CSS `@media (orientation: portrait)` immediately displays `#rotate-overlay` ("Rotate your phone"). Pressing Play also attempts `requestFullscreen()` + `screen.orientation.lock('landscape')` safely inside `try/catch`.
+- **Offline & Safe-Area Ready**: Uses `viewport-fit=cover`, `env(safe-area-inset-*)`, `touch-action: none`, `user-select: none`, and system fonts + procedural Canvas/WebAudio so it works 100% offline.
 
-## Konstanta yang bisa disetel (`js/core/konstanta.js`)
+## 3. Adjustable Constants
 
-| Konstanta | Nilai | Fungsi |
-|---|---|---|
-| `GRAVITASI` | 1800 | Percepatan gravitasi (px/s²). Naikkan agar permainan lebih cepat. |
-| `LONCAT` | 800 | Kecepatan awal lompatan. Mengatur tinggi lompatan. |
-| `PEMAIN_SPEED` | 340 | Kecepatan gerak dasar, dikali statistik kecepatan. |
-| `JANGKAUAN` | 62 | Jarak tangan ke bola yang masih bisa menyentuh. Naikkan agar lebih pemaaf. |
-| `SENTUH_MAKS` | 3 | Batas sentuhan per sisi. |
-| `SENTUH_JEDA` | 0.22 | Cooldown sentuhan per pemain (detik). |
-| `BLOK_JARAK` | 130 | Jarak maks pemain dari jaring untuk bisa blok. |
-| `NET_ATAS` | 420 | Tinggi jaring (y puncak). |
-| `POIN_TARGET` | 15 | Skor kemenangan. |
-| `SELISIH_MIN` | 2 | Selisih minimal untuk menang. |
-| `JEDA_POIN` | 1.3 | Jeda antar poin (detik). |
-| `SERVIS_TUNDA_AI` | 0.9 | Waktu sebelum AI servis (detik). |
-| `BOLA_MAKS` | 1400 | Batas kecepatan bola (px/s). |
+- **Court & Net (`js/game/ball.js`)**:
+  - `COURT.FLOOR_Y` (`620`), `COURT.LEFT_X` (`90`), `COURT.RIGHT_X` (`1190`), `COURT.NET_X` (`640`), `COURT.NET_TOP_Y` (`380`)
+  - `BALL_CFG.RADIUS` (`20`), `BALL_CFG.GRAVITY` (`1080`), `BALL_CFG.MAX_SPEED` (`1380`)
+- **Player Movement (`js/game/player.js`)**:
+  - `PLAYER_CFG.SPEED` (`370`), `PLAYER_CFG.AI_SPEED` (`335`), `PLAYER_CFG.JUMP_VY` (`-650`), `PLAYER_CFG.GRAVITY` (`1760`)
+- **Match Rules (`js/game/rules.js`)**:
+  - `TARGET_POINTS` (`15`, win by 2)
+  - `evaluateSmashTiming`: `PERFECT` vertical window (`<= 28 + bonus`), `GOOD` (`<= 58`)
+- **Stat Curves (`js/data/stats.js`)**:
+  - `TEAMS.home.players` (`Kai #7`, `Mina #4`) and `TEAMS.away.players` (`Ren #11`, `Sora #2`)
+  - `getServeProfile`, `getReceiveProfile`, `getSmashProfile`, `getBlockProfile`
 
-Konstanta lain di `js/game/laga.js` dan `js/game/ai.js`: kecepatan target smash (`vy` dan `err`), kecepatan terima dan set (`vy` -560 dan -980), kecepatan servis (`vy` -620), dan ambang reaksi AI.
+## 4. Next Steps (Stage 2+ Roadmap)
 
-## Status uji
-
-- Sintaks semua modul lolos `node --check`.
-- Simulasi logika (Node, tanpa browser): 40 dari 40 laga AI lawan AI selesai tanpa macet, rata-rata 26 poin per laga, dan aturan selisih 2 berfungsi.
-- Chromium headless (Playwright), tanpa galat konsol:
-  - Landscape 844x390 dan 1280x720: menu, laga, dan jeda tampil benar. Screenshot sudah diperiksa.
-  - Mode sentuh di HP landscape: joystick, Lompat, Smash, dan Servis tampil dan tidak menimpa skor.
-  - Portrait 390x844: overlay "Putar HP" muncul.
-- **Belum diuji:** perangkat Android sungguhan (fullscreen, lock orientasi, performa 60 fps, dan latensi sentuh), iOS Safari, dan keseimbangan permainan saat dimainkan manusia. Tingkat kesulitan dan konstanta perlu disetel setelah bermain di HP.
-
-## Tahap berikutnya
-
-- Tahap 2: servis dengan timing (power meter), blok dengan timing yang lebih ketat, dan rotasi pemain dalam tim.
-- Tahap 3: AI yang lebih cerdas (membaca lintasan bola, formasi), dan opsi 1v1 atau 3v3.
-- Tahap 4: statistik karier yang disimpan dan tampilan hasil lebih lengkap.
-- Tahap 5: aset tambahan yang tetap dibuat dengan kode (variasi karakter dan warna), serta efek partikel.
+1. **Team & Athlete Selection**: Allow picking between multiple preset 2v2 clubs or customizing player stats before starting a match.
+2. **Tournament / Best-of-3 Sets**: Add multi-set match structure and a 3-round coastal tournament ladder saved in `save.js` (incrementing `CURRENT_SAVE_VERSION` to `2` with migration).
+3. **Service Worker (Offline Cache)**: Register a lightweight `sw.js` in `index.html` for full Add-to-Home-Screen offline play on GitHub Pages.
+4. **Diving Save & Jump Serve**: Add a directional dash/dive-dig animation on double-tap or dedicated gesture, plus a timed toss-and-jump serve mechanic.
+5. **Local 2-Player / Match Replay**: Add optional split-keyboard controls or rally highlight replay buffer.

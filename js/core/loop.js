@@ -1,20 +1,32 @@
-// Loop tetap 60 langkah per detik, terpisah dari kecepatan render layar.
-export function mulaiLoop(update, render) {
-  const LANGKAH = 1 / 60;
-  let terakhir = performance.now();
-  let akumulasi = 0;
+// 60 FPS requestAnimationFrame loop with clamped delta time
 
-  function bingkai(waktu) {
-    let dt = (waktu - terakhir) / 1000;
-    terakhir = waktu;
-    if (dt > 0.1) dt = 0.1; // cegah lompatan besar setelah tab tidak aktif
-    akumulasi += dt;
-    while (akumulasi >= LANGKAH) {
-      update(LANGKAH);
-      akumulasi -= LANGKAH;
-    }
-    render();
-    requestAnimationFrame(bingkai);
+export function createGameLoop(onFrame) {
+  let rafId = 0;
+  let running = false;
+  let lastTime = 0;
+
+  function tick(now) {
+    if (!running) return;
+    const rawDt = lastTime ? (now - lastTime) / 1000 : 1 / 60;
+    lastTime = now;
+    const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
+    onFrame(dt, now);
+    rafId = window.requestAnimationFrame(tick);
   }
-  requestAnimationFrame(bingkai);
+
+  return {
+    start() {
+      if (running) return;
+      running = true;
+      lastTime = 0;
+      rafId = window.requestAnimationFrame(tick);
+    },
+    stop() {
+      running = false;
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+    },
+  };
 }

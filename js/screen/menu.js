@@ -1,40 +1,77 @@
-// Menu utama.
-import { K } from '../core/konstanta.js';
-import { input } from '../core/input.js';
-import { gambarLapangan } from './gambar.js';
-import { gambarTombol, diDalam, redupkan, teks } from './ui.js';
+// Main Menu screen controller
 
-const R_MAIN = { x: K.LEBAR / 2 - 170, y: 340, w: 340, h: 74 };
-const R_PENG = { x: K.LEBAR / 2 - 170, y: 440, w: 340, h: 74 };
-// Tombol layar penuh ditangani langsung di main.js (harus dari gestur pengguna).
-export const R_FULL = { x: K.LEBAR / 2 - 170, y: 540, w: 340, h: 74 };
+import { TEAMS } from '../data/stats.js';
 
-export function buatMenu(nav) {
-  let t = 0;
+export function createMenuScreen({ onPlay, onOpenSettings }) {
+  const btnPlay = document.getElementById('btn-play');
+  const btnSettings = document.getElementById('btn-settings');
+  const matchupCard = document.getElementById('menu-matchup-card');
+  const recordLine = document.getElementById('menu-record-line');
+
+  function renderRoster() {
+    if (!matchupCard) return;
+    matchupCard.innerHTML = `
+      <div class="matchup-header">
+        <span>2v2 Matchup</span>
+        <span>Rally to 15</span>
+      </div>
+      <div class="team-columns">
+        ${renderTeamBlock(TEAMS.home, 'home')}
+        ${renderTeamBlock(TEAMS.away, 'away')}
+      </div>
+    `;
+  }
+
+  function renderTeamBlock(team, side) {
+    const playersHtml = team.players
+      .map(
+        (p) => `
+      <div class="player-mini">
+        <div class="player-mini-top">
+          <span>#${p.number} ${p.name}</span>
+          <span class="player-role">${p.controlledBy === 'human' ? 'You' : p.role}</span>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-item"><span>SMASH</span><span>${p.stats.smash}</span></div>
+          <div class="stat-item"><span>RECV</span><span>${p.stats.receive}</span></div>
+          <div class="stat-item"><span>BLOCK</span><span>${p.stats.block}</span></div>
+          <div class="stat-item"><span>SERVE</span><span>${p.stats.serve}</span></div>
+        </div>
+      </div>`
+      )
+      .join('');
+
+    return `
+      <div class="team-block">
+        <div class="team-heading ${side}">${team.name}</div>
+        ${playersHtml}
+      </div>
+    `;
+  }
+
+  function updateRecord(save) {
+    if (!recordLine || !save?.record) return;
+    const { matchesPlayed, wins, losses } = save.record;
+    if (matchesPlayed === 0) {
+      recordLine.textContent = 'First Match Ready';
+    } else {
+      recordLine.textContent = `Record: ${wins}W · ${losses}L (${matchesPlayed} Played)`;
+    }
+  }
+
+  btnPlay?.addEventListener('click', () => {
+    btnPlay.blur();
+    onPlay();
+  });
+
+  btnSettings?.addEventListener('click', () => {
+    btnSettings.blur();
+    onOpenSettings();
+  });
+
+  renderRoster();
+
   return {
-    nama: 'menu',
-    update(dt) {
-      t += dt;
-      for (const p of input.ambilTap()) {
-        if (diDalam(R_MAIN, p)) nav.laga();
-        else if (diDalam(R_PENG, p)) nav.pengaturan();
-      }
-    },
-    render(ctx) {
-      gambarLapangan(ctx, t);
-      redupkan(ctx, 0.25);
-      ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,.35)';
-      ctx.shadowBlur = 18;
-      ctx.shadowOffsetY = 6;
-      teks(ctx, 'VOLLEYBALL', K.LEBAR / 2, 170, 92);
-      teks(ctx, '2D', K.LEBAR / 2, 262, 58, '#ffd43b', 900);
-      ctx.restore();
-      teks(ctx, 'Laga 2 lawan 2 · Tahap 1', K.LEBAR / 2, 318, 22, '#e8f6ff', 600);
-      gambarTombol(ctx, R_MAIN, 'Main', true);
-      gambarTombol(ctx, R_PENG, 'Pengaturan');
-      gambarTombol(ctx, R_FULL, nav.layarPenuhAktif() ? 'Keluar Layar Penuh' : 'Layar Penuh');
-      teks(ctx, 'Keyboard: panah + Spasi/Z/X · HP: joystick + tombol', K.LEBAR / 2, 650, 16, '#e8f6ff', 500);
-    },
+    updateRecord,
   };
 }

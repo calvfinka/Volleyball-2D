@@ -1,93 +1,233 @@
-// Input keyboard dan sentuh. Aksi tekan dicatat waktunya agar bisa di-buffer
-// (tekan sedikit sebelum bola tiba tetap dihitung).
-const peta = {
-  ArrowLeft: 'kiri', KeyA: 'kiri', ArrowRight: 'kanan', KeyD: 'kanan',
-  Space: 'lompat', ArrowUp: 'lompat', KeyW: 'lompat',
-  KeyZ: 'smash', KeyK: 'smash',
-  KeyX: 'terima', KeyJ: 'terima', Enter: 'terima',
-  Escape: 'jeda', KeyP: 'jeda',
-};
-const tahan = { kiri: false, kanan: false, lompat: false };
-const SUDAH_DIPAKAI = -1e9;
-const jejak = {};     // waktu (ms) aksi terakhir ditekan
-let joyX = 0;
-const taps = [];
+// Unified keyboard + virtual touch input manager
 
-function tekan(nama) {
-  jejak[nama] = performance.now();
-  if (nama in tahan) tahan[nama] = true;
-}
-function lepas(nama) {
-  if (nama in tahan) tahan[nama] = false;
-}
+export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnReceive, onPauseToggle, onMuteToggle }) {
+  const keys = new Set();
+  const held = {
+    left: false,
+    right: false,
+    up: false,
+    jump: false,
+    smash: false,
+    receive: false,
+  };
+  const justPressed = {
+    jump: false,
+    smash: false,
+    receive: false,
+    action: false, // unified Spacebar contextual action
+  };
 
-window.addEventListener('keydown', (e) => {
-  const a = peta[e.code];
-  if (!a) return;
-  e.preventDefault();
-  if (!e.repeat) tekan(a);
-});
-window.addEventListener('keyup', (e) => {
-  const a = peta[e.code];
-  if (a) lepas(a);
-});
-window.addEventListener('blur', () => {
-  for (const k in tahan) tahan[k] = false;
-  joyX = 0;
-});
+  let joyAxisX = 0;
+  let joyJumpActive = false;
+  let joyPointerId = null;
+  let joyOriginX = 0;
+  let joyOriginY = 0;
+  const maxKnobDist = 34;
 
-export function pasangSentuh() {
-  document.querySelectorAll('[data-aksi]').forEach((el) => {
-    const a = el.dataset.aksi;
-    const mulai = (e) => { e.preventDefault(); el.classList.add('tekan'); tekan(a); };
-    const akhir = (e) => { e.preventDefault(); el.classList.remove('tekan'); lepas(a); };
-    el.addEventListener('pointerdown', mulai);
-    el.addEventListener('pointerup', akhir);
-    el.addEventListener('pointercancel', akhir);
-    el.addEventListener('pointerleave', akhir);
+  function clearAll() {
+    keys.clear();
+    held.left = false;
+    held.right = false;
+    held.up = false;
+    held.jump = false;
+    held.smash = false;
+    held.receive = false;
+    joyAxisX = 0;
+    joyJumpActive = false;
+    joyPointerId = null;
+    if (knobEl) {
+      knobEl.style.transform = 'translate(0px, 0px)';
+    }
+    btnJump?.classList.remove('is-pressed');
+    btnSmash?.classList.remove('is-pressed');
+    btnReceive?.classList.remove('is-pressed');
+  }
+
+  function updateDirectionalState() {
+    held.left = keys.has('ArrowLeft') || keys.has('KeyA');
+    held.right = keys.has('ArrowRight') || keys.has('KeyD');
+    held.up = keys.has('ArrowUp') || keys.has('KeyW');
+  }
+
+  function onKeyDown(e) {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+      e.preventDefault();
+    }
+
+    if (e.repeat) return;
+
+    if (e.code === 'KeyP' || e.code === 'Escape') {
+      onPauseToggle?.();
+      return;
+    }
+    if (e.code === 'KeyM') {
+      onMuteToggle?.();
+      return;
+    }
+
+    keys.add(e.code);
+    updateDirectionalState();
+
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+      held.jump = true;
+      justPressed.jump = true;
+    }
+    if (e.code === 'Space') {
+      justPressed.action = true;
+      held.smash = true;
+      held.receive = true;
+    }
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      held.receive = true;
+      justPressed.receive = true;
+    }
+  }
+
+  function onKeyUp(e) {
+    keys.delete(e.code);
+    updateDirectionalState();
+
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+      held.jump = false;
+    }
+    if (e.code === 'Space') {
+      held.smash = false;
+      held.receive = false;
+    }
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      held.receive = false;
+    }
+  }
+
+  // Virtual joystick pointer handlers
+  function onJoyDown(e) {
+    e.preventDefault();
+    if (joyPointerId !== null) return;
+    joyPointerId = e.pointerId;
+    joystickEl.setPointerCapture?.(e.pointerId);
+    const rect = joystickEl.getBoundingClientRect();
+    joyOriginX = rect.left + rect.width / 2;
+    joyOriginY = rect.top + rect.height / 2;
+    updateJoystick(e.clientX, e.clientY);
+  }
+
+  function onJoyMove(e) {
+    if (e.pointerId !== joyPointerId) return;
+    e.preventDefault();
+    updateJoystick(e.clientX, e.clientY);
+  }
+
+  function onJoyUp(e) {
+    if (e.pointerId !== joyPointerId) return;
+    e.preventDefault();
+    joyPointerId = null;
+    joyAxisX = 0;
+    joyJumpActive = false;
+    if (knobEl) {
+      knobEl.style.transform = 'translate(0px, 0px)';
+    }
+  }
+
+  function updateJoystick(clientX, clientY) {
+    const dx = clientX - joyOriginX;
+    const dy = clientY - joyOriginY;
+    const dist = Math.hypot(dx, dy);
+    const clampedDist = Math.min(dist, maxKnobDist);
+    const angle = Math.atan2(dy, dx);
+    const kx = dist > 0 ? Math.cos(angle) * clampedDist : 0;
+    const ky = dist > 0 ? Math.sin(angle) * clampedDist : 0;
+
+    if (knobEl) {
+      knobEl.style.transform = `translate(${kx.toFixed(1)}px, ${ky.toFixed(1)}px)`;
+    }
+
+    const normX = kx / maxKnobDist;
+    joyAxisX = Math.abs(normX) < 0.16 ? 0 : normX;
+
+    // Optional upward stick flick triggers jump as well
+    const normY = ky / maxKnobDist;
+    if (normY < -0.68 && !joyJumpActive) {
+      joyJumpActive = true;
+      justPressed.jump = true;
+      held.jump = true;
+    } else if (normY >= -0.45 && joyJumpActive) {
+      joyJumpActive = false;
+      held.jump = false;
+    }
+  }
+
+  function bindTouchButton(btn, keyName) {
+    if (!btn) return;
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      btn.setPointerCapture?.(e.pointerId);
+      btn.classList.add('is-pressed');
+      held[keyName] = true;
+      justPressed[keyName] = true;
+    });
+    const release = (e) => {
+      e.preventDefault();
+      btn.classList.remove('is-pressed');
+      held[keyName] = false;
+    };
+    btn.addEventListener('pointerup', release);
+    btn.addEventListener('pointercancel', release);
+  }
+
+  function preventTouchDefaults(e) {
+    if (e.target.closest('button') || e.target.closest('#touch-joystick')) {
+      e.preventDefault();
+    }
+  }
+
+  window.addEventListener('keydown', onKeyDown, { passive: false });
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', clearAll);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearAll();
   });
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+  document.addEventListener('touchmove', preventTouchDefaults, { passive: false });
 
-  const joy = document.getElementById('joy');
-  const knob = document.getElementById('joy-knob');
-  const R = 60;
-  let id = null;
-  const gerak = (e) => {
-    const r = joy.getBoundingClientRect();
-    let dx = e.clientX - (r.left + r.width / 2);
-    let dy = e.clientY - (r.top + r.height / 2);
-    const d = Math.hypot(dx, dy);
-    const k = d > R ? R / d : 1;
-    dx *= k; dy *= k;
-    knob.style.transform = `translate(${dx}px,${dy}px)`;
-    joyX = dx / R;
+  if (joystickEl) {
+    joystickEl.addEventListener('pointerdown', onJoyDown);
+    joystickEl.addEventListener('pointermove', onJoyMove);
+    joystickEl.addEventListener('pointerup', onJoyUp);
+    joystickEl.addEventListener('pointercancel', onJoyUp);
+  }
+
+  bindTouchButton(btnJump, 'jump');
+  bindTouchButton(btnSmash, 'smash');
+  bindTouchButton(btnReceive, 'receive');
+
+  return {
+    snapshot() {
+      let moveX = joyAxisX;
+      if (held.left && !held.right) moveX = -1;
+      else if (held.right && !held.left) moveX = 1;
+
+      const snap = {
+        moveX,
+        jumpPressed: justPressed.jump,
+        jumpHeld: held.jump || held.up,
+        smashPressed: justPressed.smash,
+        receivePressed: justPressed.receive,
+        actionPressed: justPressed.action,
+      };
+      justPressed.jump = false;
+      justPressed.smash = false;
+      justPressed.receive = false;
+      justPressed.action = false;
+      return snap;
+    },
+    clearAll,
+    hasTouchHardware() {
+      return (
+        'ontouchstart' in window ||
+        (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+        window.matchMedia('(pointer: coarse)').matches
+      );
+    },
   };
-  joy.addEventListener('pointerdown', (e) => { id = e.pointerId; joy.setPointerCapture(id); gerak(e); });
-  joy.addEventListener('pointermove', (e) => { if (e.pointerId === id) gerak(e); });
-  const selesai = (e) => {
-    if (e.pointerId !== id) return;
-    id = null; joyX = 0; knob.style.transform = '';
-  };
-  joy.addEventListener('pointerup', selesai);
-  joy.addEventListener('pointercancel', selesai);
 }
-
-export const input = {
-  arah() {
-    let x = (tahan.kanan ? 1 : 0) - (tahan.kiri ? 1 : 0);
-    if (!x) x = Math.abs(joyX) > 0.2 ? joyX : 0;
-    return Math.max(-1, Math.min(1, x));
-  },
-  lompatTahan() { return tahan.lompat; },
-  buffer(nama, ms) { return performance.now() - (jejak[nama] ?? SUDAH_DIPAKAI) < ms; },
-  habiskan(nama) { jejak[nama] = SUDAH_DIPAKAI; },
-  ambilJeda() {
-    const ada = (jejak.jeda ?? SUDAH_DIPAKAI) > SUDAH_DIPAKAI;
-    if (ada) jejak.jeda = SUDAH_DIPAKAI;
-    return ada;
-  },
-  pushTap(x, y) {
-    taps.push({ x, y });
-    if (taps.length > 20) taps.shift();
-  },
-  ambilTap() { return taps.splice(0); },
-};

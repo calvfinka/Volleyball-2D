@@ -1,104 +1,124 @@
-// Bootstrap: canvas 1280x720 diskalakan memenuhi layar, layar penuh, orientasi, dan loop utama.
-import { K } from './core/konstanta.js';
-import { mulaiLoop } from './core/loop.js';
-import { layar } from './core/layar.js';
-import { input, pasangSentuh } from './core/input.js';
-import { pengaturan } from './core/simpan.js';
-import { setSuara } from './core/audio.js';
-import { buatMenu, R_FULL } from './screen/menu.js';
-import { buatPengaturan } from './screen/pengaturan.js';
-import { buatLayarLaga } from './screen/laga.js';
-import { diDalam } from './screen/ui.js';
+// Application bootstrap: wires core services, screens, and 60fps loop
 
-const kanvas = document.getElementById('kanvas');
-const ctx = kanvas.getContext('2d');
-const elPutar = document.getElementById('putar');
-const elSentuh = document.getElementById('sentuh');
-const elBtnTerima = document.getElementById('btn-terima');
-const adaSentuh = matchMedia('(pointer: coarse)').matches;
+import { loadSave, updateSettings } from './core/save.js';
+import { audio } from './core/audio.js';
+import { createGameLoop } from './core/loop.js';
+import { createInputManager } from './core/input.js';
+import { createScreenManager } from './core/screen.js';
+import { createRenderer } from './game/renderer.js';
+import { createMenuScreen } from './screen/menu.js';
+import { createSettingsScreen } from './screen/settings.js';
+import { createMatchScreen } from './screen/match.js';
 
-kanvas.width = K.LEBAR;
-kanvas.height = K.TINGGI;
-setSuara(pengaturan.suara);
+function init() {
+  const canvas = document.getElementById('game-canvas');
+  let saveState = loadSave();
+  audio.setMuted(!saveState.settings.soundEnabled);
 
-// Layar penuh dan orientasi. Harus dipanggil langsung dari gestur pengguna.
-function layarPenuhAktif() {
-  return !!document.fullscreenElement;
-}
+  const screenManager = createScreenManager();
+  const renderer = createRenderer(canvas);
 
-async function toggleLayarPenuh() {
-  try {
-    if (layarPenuhAktif()) {
-      await document.exitFullscreen();
-      screen.orientation?.unlock?.();
+  let matchScreen = null;
+  let menuScreen = null;
+  let settingsScreen = null;
+
+  const unlockOnce = () => {
+    audio.unlock();
+    window.removeEventListener('pointerdown', unlockOnce);
+    window.removeEventListener('keydown', unlockOnce);
+  };
+  window.addEventListener('pointerdown', unlockOnce, { passive: true });
+  window.addEventListener('keydown', unlockOnce, { passive: true });
+
+  const input = createInputManager({
+    joystickEl: document.getElementById('touch-joystick'),
+    knobEl: document.getElementById('joystick-knob'),
+    btnJump: document.getElementById('touch-btn-jump'),
+    btnSmash: document.getElementById('touch-btn-smash'),
+    btnReceive: document.getElementById('touch-btn-receive'),
+    onPauseToggle: () => matchScreen?.togglePause(),
+    onMuteToggle: () => {
+      const nextSound = audio.isMuted();
+      audio.setMuted(!nextSound);
+      saveState = updateSettings({ soundEnabled: nextSound });
+      settingsScreen?.syncUI(saveState);
+      matchScreen?.syncMuteButton();
+    },
+  });
+
+  function launchMatch() {
+    screenManager.tryLockLandscape();
+    matchScreen.startMatch(saveState.settings);
+  }
+
+  menuScreen = createMenuScreen({
+    onPlay: launchMatch,
+    onOpenSettings: () => {
+      settingsScreen.syncUI(saveState);
+      screenManager.showScreen('settings');
+    },
+  });
+
+  settingsScreen = createSettingsScreen({
+    onBack: () => screenManager.showScreen('menu'),
+    onSaveChanged: (updated) => {
+      saveState = updated;
+      audio.setMuted(!saveState.settings.soundEnabled);
+      menuScreen.updateRecord(saveState);
+      matchScreen?.applyTouchVisibility(saveState.settings.touchMode);
+      matchScreen?.syncMuteButton();
+    },
+  });
+
+  matchScreen = createMatchScreen({
+    screenManager,
+    input,
+    audio,
+    onReturnToMenu: () => {
+      menuScreen.updateRecord(loadSave());
+      screenManager.showScreen('menu');
+    },
+    onRecordUpdated: (updated) => {
+      saveState = updated;
+      menuScreen.updateRecord(saveState);
+    },
+  });
+
+  menuScreen.updateRecord(saveState);
+  settingsScreen.syncUI(saveState);
+
+  // Title keyboard shortcut (Enter / Space starts match when on title screen)
+  window.addEventListener('keydown', (e) => {
+    if (screenManager.getCurrentScreen() === 'menu' && (e.code === 'Enter' || e.code === 'Space')) {
+      e.preventDefault();
+      launchMatch();
+    }
+  });
+
+  // Responsive canvas sizing
+  window.addEventListener('resize', () => renderer.resize());
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => renderer.resize()).observe(document.getElementById('app'));
+  }
+
+  // Main 60 FPS loop
+  const loop = createGameLoop((dt, nowMs) => {
+    if (screenManager.getCurrentScreen() === 'match') {
+      matchScreen.step(dt);
+      renderer.render(matchScreen.getMatchState(), nowMs / 1000);
     } else {
-      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-      await screen.orientation?.lock?.('landscape');
+      renderer.render(null, nowMs / 1000);
     }
-  } catch (e) {
-    // Browser menolak (misalnya iOS Safari). Overlay "Putar HP" tetap sebagai cadangan.
-    console.warn('Layar penuh tidak tersedia:', e);
+  });
+  loop.start();
+
+  // Support ?autostart=1 for automated testing and quick launch
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('autostart') === '1') {
+    matchScreen.startMatch(saveState.settings);
+  } else {
+    screenManager.showScreen('menu');
   }
 }
 
-// Navigasi antar layar. Diisi setelah layar dibuat agar bisa saling memanggil.
-const nav = { layarPenuhAktif };
-const menu = buatMenu(nav);
-const peng = buatPengaturan(nav);
-const laga = buatLayarLaga(nav);
-Object.assign(nav, {
-  menu: () => layar.ganti(menu),
-  laga: () => layar.ganti(laga),
-  pengaturan: () => layar.ganti(peng),
-  toggleLayarPenuh,
-});
-
-// Ukuran canvas mengikuti rasio 16:9 dan memenuhi layar.
-function fitKanvas() {
-  const s = Math.min(innerWidth / K.LEBAR, innerHeight / K.TINGGI);
-  kanvas.style.width = `${K.LEBAR * s}px`;
-  kanvas.style.height = `${K.TINGGI * s}px`;
-}
-
-// Klik atau sentuhan pada canvas dikonversi ke koordinat logis.
-// Tombol layar penuh dipanggil langsung di sini agar tetap dalam gestur pengguna.
-kanvas.addEventListener('pointerdown', (e) => {
-  const r = kanvas.getBoundingClientRect();
-  const p = { x: ((e.clientX - r.left) / r.width) * K.LEBAR, y: ((e.clientY - r.top) / r.height) * K.TINGGI };
-  if (layar.aktif === menu && diDalam(R_FULL, p)) {
-    toggleLayarPenuh();
-    return;
-  }
-  input.pushTap(p.x, p.y);
-});
-
-// Layar portrait: tampilkan pesan putar dan jeda permainan.
-function cekPutar() {
-  const potret = innerHeight > innerWidth;
-  elPutar.classList.toggle('tersembunyi', !potret);
-  return potret;
-}
-
-// Cegah zoom, menu konteks, dan scroll.
-document.addEventListener('contextmenu', (e) => e.preventDefault());
-document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
-
-window.addEventListener('resize', () => { fitKanvas(); cekPutar(); });
-fitKanvas();
-pasangSentuh();
-layar.ganti(menu);
-
-let labelSekarang = '';
-mulaiLoop(
-  (dt) => { if (!cekPutar()) layar.update(dt); },
-  () => {
-    layar.render(ctx);
-    const aktif = layar.aktif;
-    elSentuh.classList.toggle('tersembunyi', !(adaSentuh && aktif?.nama === 'laga'));
-    if (aktif?.labelTerima) {
-      const lbl = aktif.labelTerima();
-      if (lbl !== labelSekarang) { labelSekarang = lbl; elBtnTerima.textContent = lbl; }
-    }
-  },
-);
+init();

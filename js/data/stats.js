@@ -23,6 +23,7 @@ export const TEAMS = {
           receive: 74,
           block: 76,
           serve: 80,
+          speed: 84,
         },
       },
       {
@@ -39,6 +40,7 @@ export const TEAMS = {
           receive: 88,
           block: 72,
           serve: 78,
+          speed: 82,
         },
       },
     ],
@@ -65,6 +67,7 @@ export const TEAMS = {
           receive: 72,
           block: 85,
           serve: 78,
+          speed: 78,
         },
       },
       {
@@ -81,6 +84,7 @@ export const TEAMS = {
           receive: 84,
           block: 70,
           serve: 76,
+          speed: 86,
         },
       },
     ],
@@ -88,42 +92,52 @@ export const TEAMS = {
 };
 
 function normStat(val) {
-  return Math.max(0, Math.min(1, (val - 50) / 50));
+  return Math.max(0, Math.min(1, ((val ?? 75) - 50) / 50));
 }
 
 export function getServeProfile(stats) {
   const t = normStat(stats.serve);
   return {
-    flightTime: 1.50 - t * 0.20,   // faster serve with higher serve stat while clearing net cleanly
-    targetDepth: 0.45 + t * 0.42,  // deeper toward backcourt line
-    topspin: 55 + t * 95,          // downward dip acceleration
-    spread: (1 - t) * 55,          // slight variance for low serve stat
+    flightTime: 1.5 - t * 0.22,
+    targetDepth: 0.45 + t * 0.42,
+    topspin: 8 + t * 14, // rad/s spin applied to ball for Magnus dip
+    spread: (1 - t) * 58,
   };
 }
 
 export function getReceiveProfile(stats) {
   const t = normStat(stats.receive);
   return {
-    reachBonus: t * 16,            // extra ground receive reach in px
+    reachBonus: t * 18,
     dampFactor: 0.42 + (1 - t) * 0.14,
-    setPrecision: 0.72 + t * 0.28, // higher = cleaner auto-feed target
+    setPrecision: 0.72 + t * 0.28,
   };
 }
 
 export function getSmashProfile(stats) {
   const t = normStat(stats.smash);
   return {
-    power: 780 + t * 240,          // peak smash velocity
-    perfectWindowBonus: t * 14,    // wider sweet spot
-    steepness: 0.38 + t * 0.16,    // sharper downward angle
+    power: 780 + t * 240,
+    perfectWindowBonus: t * 14,
+    steepness: 0.38 + t * 0.18,
+    spin: 18 + t * 14,
   };
 }
 
 export function getBlockProfile(stats) {
   const t = normStat(stats.block);
   return {
-    reachHeight: 14 + t * 22,      // extra vertical hand reach above head
-    stuffChance: 0.42 + t * 0.45,  // probability of hard downward stuff vs soft touch
+    reachHeight: 14 + t * 24,
+    stuffChance: 0.42 + t * 0.45,
     deflectSpeed: 420 + t * 180,
+  };
+}
+
+export function getSpeedProfile(stats) {
+  const t = normStat(stats.speed);
+  return {
+    maxSpeed: 315 + t * 95,      // px/s horizontal move speed
+    accel: 1800 + t * 900,       // px/s^2 ground acceleration
+    jumpVy: -610 - t * 75,       // jump height from speed/agility stat
   };
 }

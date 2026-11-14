@@ -1,4 +1,4 @@
-// Canvas 2D renderer for Volleyball 2D (1280x720 logical space scaled cleanly with DPR & cached background)
+// Canvas 2D renderer for Volleyball 2D (1280x720 logical space, cached backdrop, keyframe poses, airborne timing ring)
 
 import { COURT, BALL_CFG } from './ball.js';
 
@@ -45,10 +45,8 @@ export function createRenderer(canvas) {
     const offsetX = cachedOffsetX;
     const offsetY = cachedOffsetY;
 
-    // Seamless sky & apron extension only on outer wings (avoids full-screen overdraw)
     drawWideArenaExtensions(ctx, viewW, viewH, offsetX, offsetY, scale, cachedSkyGrad);
 
-    // Apply micro camera trauma shake
     const shakeMag = match ? match.cameraShake * match.cameraShake * 11 : 0;
     const shakeX = shakeMag ? (Math.random() - 0.5) * 2 * shakeMag : 0;
     const shakeY = shakeMag ? (Math.random() - 0.5) * 2 * shakeMag : 0;
@@ -57,48 +55,37 @@ export function createRenderer(canvas) {
     ctx.translate(offsetX + shakeX, offsetY + shakeY);
     ctx.scale(scale, scale);
 
-    // 1. Blit pre-rendered static gymnasium/coastal court backdrop (fast 60fps mobile perf!)
     ctx.drawImage(bgCanvas, 0, 0);
 
     if (match) {
-      // 2. Ground shadows for all 4 players & ball
       for (const p of [...match.homePlayers, ...match.awayPlayers]) {
         drawPlayerShadow(ctx, p);
       }
       drawBallShadow(ctx, match.ball);
 
-      // 3. Auto-feed smash timing ring when ball enters player's strike zone
+      // Smash timing indicator ONLY when the player is airborne near the ball
       const human = match.homePlayers[0];
-      if (match.phase === 'rally' && match.ball.active && match.ball.x < COURT.NET_X && match.ball.y < COURT.FLOOR_Y - 110) {
+      if (match.phase === 'rally' && match.ball.active && !human.onGround) {
         drawSmashTimingRing(ctx, match.ball, human, timeSec);
       }
 
-      // 4. Touch count indicator pips above active side
       if (match.phase === 'rally' && match.possessionSide && match.sideTouches > 0) {
         drawTouchCounter(ctx, match.possessionSide, match.sideTouches);
       }
 
-      // 5. Players (drawn back-to-front slightly, articulated from scratch)
       for (const p of [match.homePlayers[1], match.awayPlayers[1], match.homePlayers[0], match.awayPlayers[0]]) {
-        drawPlayer(ctx, p, p.id === human.id);
+        drawPlayer(ctx, p, p.id === human.id && !match.aiControlledHome);
       }
 
-      // 6. Net (drawn over back players / behind foreground ball when in front)
       drawNet(ctx);
-
-      // 7. Ball & smash motion trail
       drawBallTrail(ctx, match.ball);
       drawBall(ctx, match.ball);
-
-      // 8. Pooled particles
       drawParticles(ctx, match.particles);
 
-      // 9. Floating timing / block / auto-feed callout
       if (match.timingFeedback.timer > 0 && match.timingFeedback.text) {
         drawFloatingFeedback(ctx, match.timingFeedback);
       }
     } else {
-      // Idle menu backdrop animation
       drawNet(ctx);
       const idleBall = {
         x: 640 + Math.sin(timeSec * 1.4) * 220,
@@ -165,7 +152,6 @@ function drawWideArenaExtensions(ctx, viewW, viewH, offsetX, offsetY, scale, sky
 }
 
 function buildStaticBackdrop(ctx) {
-  // Sunlit coastal gymnasium sky / clerestory
   const skyGrad = ctx.createLinearGradient(0, 0, 0, COURT.FLOOR_Y);
   skyGrad.addColorStop(0, '#CBE6F5');
   skyGrad.addColorStop(0.55, '#F5E9D3');
@@ -173,7 +159,6 @@ function buildStaticBackdrop(ctx) {
   ctx.fillStyle = skyGrad;
   ctx.fillRect(0, 0, COURT.WIDTH, COURT.FLOOR_Y);
 
-  // Subtle architectural stadium trusses in ceiling
   ctx.strokeStyle = 'rgba(24, 41, 62, 0.08)';
   ctx.lineWidth = 4;
   for (let x = 80; x < COURT.WIDTH; x += 220) {
@@ -184,18 +169,15 @@ function buildStaticBackdrop(ctx) {
     ctx.stroke();
   }
 
-  // Distant coastal horizon & bleachers
   ctx.fillStyle = '#8FB7C7';
   ctx.fillRect(0, 440, COURT.WIDTH, 70);
 
-  // Bleacher tiers
   ctx.fillStyle = '#C9B79C';
   ctx.fillRect(0, 500, COURT.WIDTH, 120);
   ctx.fillStyle = '#B7A283';
   ctx.fillRect(0, 535, COURT.WIDTH, 22);
   ctx.fillRect(0, 575, COURT.WIDTH, 24);
 
-  // Advertising / court perimeter boards
   ctx.fillStyle = '#18293E';
   ctx.fillRect(36, 588, COURT.WIDTH - 72, 32);
   ctx.fillStyle = '#E84A27';
@@ -203,28 +185,22 @@ function buildStaticBackdrop(ctx) {
   ctx.fillStyle = '#0E7C7B';
   ctx.fillRect(1046, 594, 180, 20);
 
-  // Floor apron (deep teal-slate)
   ctx.fillStyle = '#1D4D58';
   ctx.fillRect(0, COURT.FLOOR_Y, COURT.WIDTH, COURT.HEIGHT - COURT.FLOOR_Y);
 
-  // Main Playing Court Surface (warm sunlit maple/terracotta)
   ctx.fillStyle = '#E69A52';
   ctx.fillRect(COURT.LEFT_X, COURT.FLOOR_Y, COURT.RIGHT_X - COURT.LEFT_X, 46);
 
-  // Subtle perspective court depth shading
   ctx.fillStyle = 'rgba(24, 41, 62, 0.14)';
   ctx.fillRect(COURT.LEFT_X, COURT.FLOOR_Y + 46, COURT.RIGHT_X - COURT.LEFT_X, 12);
 
-  // Crisp White Court Lines
   ctx.fillStyle = '#FFFDF8';
-  ctx.fillRect(COURT.LEFT_X - 4, COURT.FLOOR_Y, 6, 46); // Left baseline
-  ctx.fillRect(COURT.RIGHT_X - 2, COURT.FLOOR_Y, 6, 46); // Right baseline
-  ctx.fillRect(COURT.NET_X - 3, COURT.FLOOR_Y, 6, 46); // Center line
-  // 3-meter attack lines
+  ctx.fillRect(COURT.LEFT_X - 4, COURT.FLOOR_Y, 6, 46);
+  ctx.fillRect(COURT.RIGHT_X - 2, COURT.FLOOR_Y, 6, 46);
+  ctx.fillRect(COURT.NET_X - 3, COURT.FLOOR_Y, 6, 46);
   ctx.fillStyle = 'rgba(255, 253, 248, 0.65)';
   ctx.fillRect(COURT.NET_X - 180, COURT.FLOOR_Y, 4, 46);
   ctx.fillRect(COURT.NET_X + 176, COURT.FLOOR_Y, 4, 46);
-  // Top baseline edge
   ctx.fillStyle = '#FFFDF8';
   ctx.fillRect(COURT.LEFT_X - 4, COURT.FLOOR_Y, COURT.RIGHT_X - COURT.LEFT_X + 8, 5);
 }
@@ -234,11 +210,9 @@ function drawNet(ctx) {
   const topY = COURT.NET_TOP_Y;
   const meshBottom = topY + 128;
 
-  // Center pole
   ctx.fillStyle = '#243447';
   ctx.fillRect(nx - 4, topY - 12, 8, COURT.FLOOR_Y - topY + 18);
 
-  // Net mesh shadow & grid lines
   ctx.fillStyle = 'rgba(24, 41, 62, 0.24)';
   ctx.fillRect(nx - 6, topY + 14, 12, meshBottom - topY - 14);
 
@@ -251,14 +225,12 @@ function drawNet(ctx) {
   }
   ctx.stroke();
 
-  // Crisp white top tape
   ctx.fillStyle = '#FFFDF8';
   ctx.fillRect(nx - 8, topY, 16, 16);
   ctx.strokeStyle = '#18293E';
   ctx.lineWidth = 2;
   ctx.strokeRect(nx - 8, topY, 16, 16);
 
-  // Antenna tip
   ctx.fillStyle = '#E84A27';
   ctx.fillRect(nx - 2, topY - 34, 4, 34);
   ctx.fillStyle = '#FFFDF8';
@@ -292,7 +264,6 @@ function drawPlayer(ctx, p, isControlled) {
   ctx.translate(p.x, p.y);
   ctx.scale(p.scaleX, p.scaleY);
 
-  // Controlled player subtle floor ring marker
   if (isControlled && p.onGround) {
     ctx.strokeStyle = '#F29F05';
     ctx.lineWidth = 3;
@@ -301,32 +272,31 @@ function drawPlayer(ctx, p, isControlled) {
     ctx.stroke();
   }
 
-  // Slight forward lean while running or smashing
-  const lean = p.pose === 'smash' ? p.facing * 0.16 : p.vx * 0.00035;
+  // Keyframe body tilt by pose
+  let lean = p.vx * 0.00035;
+  if (p.pose === 'smash') lean = p.facing * 0.2;
+  else if (p.pose === 'serve') lean = p.facing * 0.14;
+  else if (p.pose === 'receive') lean = p.facing * 0.12;
   ctx.rotate(lean);
 
-  // Legs (animated stride)
+  // Keyframe legs by pose
   const stride = p.pose === 'run' ? Math.sin(p.stridePhase) * 12 : 0;
-  const kneeBend = !p.onGround ? -6 : 0;
+  const kneeBend = !p.onGround ? -7 : (p.pose === 'receive' ? 4 : 0);
+  const crouchY = p.pose === 'receive' ? 4 : 0;
   ctx.lineCap = 'round';
   ctx.lineWidth = 9;
   ctx.strokeStyle = p.skinColor;
 
-  // Back leg
   ctx.beginPath();
-  ctx.moveTo(-6, -34);
+  ctx.moveTo(-6, -34 + crouchY);
   ctx.lineTo(-8 - stride, -16 + kneeBend);
   ctx.lineTo(-10 - stride * 1.1, -3 + kneeBend);
-  ctx.stroke();
-
-  // Front leg
-  ctx.beginPath();
-  ctx.moveTo(6, -34);
+  ctx.moveTo(6, -34 + crouchY);
   ctx.lineTo(8 + stride, -16 + kneeBend);
   ctx.lineTo(10 + stride * 1.1, -3 + kneeBend);
   ctx.stroke();
 
-  // Athletic shoes
+  // Shoes
   ctx.fillStyle = '#FFFDF8';
   ctx.fillRect(-15 - stride * 1.1, -6 + kneeBend, 14, 7);
   ctx.fillRect(3 + stride * 1.1, -6 + kneeBend, 14, 7);
@@ -334,13 +304,13 @@ function drawPlayer(ctx, p, isControlled) {
   // Shorts
   ctx.fillStyle = shortsColor;
   ctx.beginPath();
-  ctx.roundRect(-15, -44, 30, 16, 4);
+  ctx.roundRect(-15, -44 + crouchY, 30, 16, 4);
   ctx.fill();
 
   // Torso / Jersey
   ctx.fillStyle = p.hitFlash > 0 ? '#FFFDF8' : jerseyColor;
   ctx.beginPath();
-  ctx.roundRect(-16, -74, 32, 34, 7);
+  ctx.roundRect(-16, -74 + crouchY, 32, 34, 7);
   ctx.fill();
   ctx.strokeStyle = '#18293E';
   ctx.lineWidth = 2.2;
@@ -351,95 +321,103 @@ function drawPlayer(ctx, p, isControlled) {
   ctx.font = '900 14px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(p.number), 0, -56);
+  ctx.fillText(String(p.number), 0, -56 + crouchY);
 
   // Head
+  const headY = -86 + crouchY;
   ctx.fillStyle = p.skinColor;
   ctx.beginPath();
-  ctx.arc(0, -86, 13, 0, Math.PI * 2);
+  ctx.arc(0, headY, 13, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = '#18293E';
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Expressive Eyes facing direction
+  // Eye
   ctx.fillStyle = '#18293E';
   ctx.beginPath();
-  ctx.arc(p.facing * 5, -87, 2.1, 0, Math.PI * 2);
+  ctx.arc(p.facing * 5, headY - 1, 2.1, 0, Math.PI * 2);
   ctx.fill();
 
-  // Distinct Hair / Headband silhouettes
+  // Hair / Headband silhouettes
   ctx.fillStyle = p.hairColor;
   if (p.hairStyle === 'spiky') {
     ctx.beginPath();
-    ctx.moveTo(-12, -90);
-    ctx.lineTo(-6, -104);
-    ctx.lineTo(2, -98);
-    ctx.lineTo(9, -104);
-    ctx.lineTo(13, -89);
+    ctx.moveTo(-12, headY - 4);
+    ctx.lineTo(-6, headY - 18);
+    ctx.lineTo(2, headY - 12);
+    ctx.lineTo(9, headY - 18);
+    ctx.lineTo(13, headY - 3);
     ctx.closePath();
     ctx.fill();
-    // Headband
     ctx.fillStyle = '#F29F05';
-    ctx.fillRect(-13, -93, 26, 4);
+    ctx.fillRect(-13, headY - 7, 26, 4);
   } else if (p.hairStyle === 'ponytail') {
     ctx.beginPath();
-    ctx.arc(0, -90, 13, Math.PI, 0);
+    ctx.arc(0, headY - 4, 13, Math.PI, 0);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(-p.facing * 14, -85, 6, 10, p.facing * 0.4, 0, Math.PI * 2);
+    ctx.ellipse(-p.facing * 14, headY + 1, 6, 10, p.facing * 0.4, 0, Math.PI * 2);
     ctx.fill();
   } else if (p.hairStyle === 'sweep') {
     ctx.beginPath();
-    ctx.moveTo(-13, -88);
-    ctx.quadraticCurveTo(0, -106, 14, -90);
-    ctx.lineTo(10, -96);
+    ctx.moveTo(-13, headY - 2);
+    ctx.quadraticCurveTo(0, headY - 20, 14, headY - 4);
+    ctx.lineTo(10, headY - 10);
     ctx.closePath();
     ctx.fill();
   } else {
     ctx.beginPath();
-    ctx.arc(0, -89, 13.5, Math.PI * 0.9, Math.PI * 0.1);
+    ctx.arc(0, headY - 3, 13.5, Math.PI * 0.9, Math.PI * 0.1);
     ctx.fill();
   }
 
-  // Articulated Arms anchored at shoulders so jersey numbers stay crisp & legible
+  // Distinct Keyframe Arm Poses (anchored at shoulders, clear of jersey numbers)
   ctx.strokeStyle = p.skinColor;
   ctx.lineWidth = 7;
   ctx.lineCap = 'round';
   ctx.beginPath();
 
   if (p.pose === 'receive') {
-    // Classic joined-forearm bump platform extended forward
-    ctx.moveTo(p.facing * 12, -62);
-    ctx.lineTo(p.facing * 30, -48);
+    ctx.moveTo(p.facing * 12, -58 + crouchY);
+    ctx.lineTo(p.facing * 32, -46 + crouchY);
   } else if (p.pose === 'set') {
-    // Two hands overhead
     ctx.moveTo(-12, -68);
-    ctx.lineTo(-6, -98);
+    ctx.lineTo(-7, -100);
     ctx.moveTo(12, -68);
-    ctx.lineTo(6, -98);
-  } else if (p.pose === 'smash' || p.pose === 'serve') {
-    // Dynamic high-arc spike swing
+    ctx.lineTo(7, -100);
+  } else if (p.pose === 'smash') {
+    ctx.moveTo(-12, -66);
+    ctx.lineTo(-p.facing * 18, -82);
     ctx.moveTo(p.facing * 12, -68);
-    ctx.lineTo(p.facing * 24, -96);
+    ctx.lineTo(p.facing * 26, -98);
+  } else if (p.pose === 'serve') {
+    ctx.moveTo(-12, -66);
+    ctx.lineTo(-p.facing * 14, -52);
+    ctx.moveTo(p.facing * 12, -68);
+    ctx.lineTo(p.facing * 22, -100);
   } else if (p.pose === 'block') {
-    // Wall block hands high above net
     ctx.moveTo(-10, -68);
-    ctx.lineTo(p.facing * 8, -108);
+    ctx.lineTo(p.facing * 8, -110);
     ctx.moveTo(10, -68);
-    ctx.lineTo(p.facing * 14, -108);
-  } else if (!p.onGround) {
-    // Airborne ready arms
+    ctx.lineTo(p.facing * 14, -110);
+  } else if (p.pose === 'jump') {
     ctx.moveTo(-13, -68);
-    ctx.lineTo(-20, -86);
+    ctx.lineTo(-21, -86);
     ctx.moveTo(13, -68);
     ctx.lineTo(22, -88);
+  } else if (p.pose === 'run') {
+    const swing = Math.sin(p.stridePhase) * 10;
+    ctx.moveTo(-13, -66);
+    ctx.lineTo(-18 - swing * 0.6, -48 + swing * 0.4);
+    ctx.moveTo(13, -66);
+    ctx.lineTo(18 + swing * 0.6, -48 - swing * 0.4);
   } else {
-    // Athletic ready stance clear of chest number
+    // Ready stance
     ctx.moveTo(-13, -66);
     ctx.lineTo(-19, -48);
     ctx.moveTo(13, -66);
-    ctx.lineTo(p.facing * 24, -52);
+    ctx.lineTo(p.facing * 23, -52);
   }
   ctx.stroke();
 
@@ -449,15 +427,15 @@ function drawPlayer(ctx, p, isControlled) {
 function drawSmashTimingRing(ctx, ball, human, timeSec) {
   const handY = human.y - 86;
   const dist = Math.hypot(ball.x - human.x, ball.y - handY);
-  if (dist > 180) return;
+  if (dist > 165) return;
 
-  const isSweetSpot = Math.abs(ball.y - handY) <= 40 && !human.onGround;
+  const isSweetSpot = Math.abs(ball.y - handY) <= 38 && Math.abs(human.vy) < 250;
   const pulse = 1 + Math.sin(timeSec * 12) * 0.08;
   const ringRadius = (BALL_CFG.RADIUS + 14) * pulse;
 
   ctx.save();
-  ctx.strokeStyle = isSweetSpot ? '#F29F05' : 'rgba(255, 253, 248, 0.72)';
-  ctx.lineWidth = isSweetSpot ? 3.5 : 2;
+  ctx.strokeStyle = isSweetSpot ? '#F29F05' : 'rgba(255, 253, 248, 0.8)';
+  ctx.lineWidth = isSweetSpot ? 3.5 : 2.2;
   ctx.setLineDash(isSweetSpot ? [] : [6, 5]);
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ringRadius, 0, Math.PI * 2);
@@ -503,13 +481,11 @@ function drawBall(ctx, ball) {
   ctx.translate(ball.x, ball.y);
   ctx.rotate(ball.angle);
 
-  // Cream base sphere
   ctx.fillStyle = '#FFFDF8';
   ctx.beginPath();
   ctx.arc(0, 0, BALL_CFG.RADIUS, 0, Math.PI * 2);
   ctx.fill();
 
-  // Classic 3-stripe curved athletic volleyball panels
   ctx.save();
   ctx.beginPath();
   ctx.arc(0, 0, BALL_CFG.RADIUS, 0, Math.PI * 2);
@@ -518,7 +494,6 @@ function drawBall(ctx, ball) {
   ctx.strokeStyle = '#18293E';
   ctx.lineWidth = 2.6;
 
-  // Gold & Coral panel accents
   ctx.fillStyle = '#F29F05';
   ctx.beginPath();
   ctx.moveTo(-20, -6);
@@ -533,7 +508,6 @@ function drawBall(ctx, ball) {
   ctx.quadraticCurveTo(0, 20, -18, 8);
   ctx.fill();
 
-  // Seam lines
   ctx.beginPath();
   ctx.moveTo(-20, -5);
   ctx.quadraticCurveTo(0, -14, 20, -3);
@@ -545,7 +519,6 @@ function drawBall(ctx, ball) {
 
   ctx.restore();
 
-  // Crisp outer stroke
   ctx.strokeStyle = '#18293E';
   ctx.lineWidth = 2.5;
   ctx.beginPath();

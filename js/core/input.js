@@ -1,4 +1,4 @@
-// Unified keyboard + virtual touch input manager
+// Unified keyboard + virtual touch input manager with safe pointer capture
 
 export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnReceive, onPauseToggle, onMuteToggle }) {
   const keys = new Set();
@@ -22,7 +22,11 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
   let joyPointerId = null;
   let joyOriginX = 0;
   let joyOriginY = 0;
-  const maxKnobDist = 34;
+  let maxKnobDist = 34;
+
+  function setJoystickRadius(px) {
+    maxKnobDist = Math.max(24, Math.min(48, px));
+  }
 
   function clearAll() {
     keys.clear();
@@ -32,6 +36,10 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
     held.jump = false;
     held.smash = false;
     held.receive = false;
+    justPressed.jump = false;
+    justPressed.smash = false;
+    justPressed.receive = false;
+    justPressed.action = false;
     joyAxisX = 0;
     joyJumpActive = false;
     joyPointerId = null;
@@ -99,12 +107,21 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
     }
   }
 
-  // Virtual joystick pointer handlers
+  function safeSetPointerCapture(el, pointerId) {
+    try {
+      if (el?.setPointerCapture && pointerId !== undefined) {
+        el.setPointerCapture(pointerId);
+      }
+    } catch {
+      // Ignore synthetic or non-active pointerId errors
+    }
+  }
+
   function onJoyDown(e) {
     e.preventDefault();
     if (joyPointerId !== null) return;
     joyPointerId = e.pointerId;
-    joystickEl.setPointerCapture?.(e.pointerId);
+    safeSetPointerCapture(joystickEl, e.pointerId);
     const rect = joystickEl.getBoundingClientRect();
     joyOriginX = rect.left + rect.width / 2;
     joyOriginY = rect.top + rect.height / 2;
@@ -144,7 +161,6 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
     const normX = kx / maxKnobDist;
     joyAxisX = Math.abs(normX) < 0.16 ? 0 : normX;
 
-    // Optional upward stick flick triggers jump as well
     const normY = ky / maxKnobDist;
     if (normY < -0.68 && !joyJumpActive) {
       joyJumpActive = true;
@@ -160,7 +176,7 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
     if (!btn) return;
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      btn.setPointerCapture?.(e.pointerId);
+      safeSetPointerCapture(btn, e.pointerId);
       btn.classList.add('is-pressed');
       held[keyName] = true;
       justPressed[keyName] = true;
@@ -172,10 +188,14 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
     };
     btn.addEventListener('pointerup', release);
     btn.addEventListener('pointercancel', release);
+    btn.addEventListener('lostpointercapture', () => {
+      btn.classList.remove('is-pressed');
+      held[keyName] = false;
+    });
   }
 
   function preventTouchDefaults(e) {
-    if (e.target.closest('button') || e.target.closest('#touch-joystick')) {
+    if (e.target && (e.target.closest?.('button') || e.target.closest?.('#touch-joystick'))) {
       e.preventDefault();
     }
   }
@@ -195,6 +215,12 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
     joystickEl.addEventListener('pointermove', onJoyMove);
     joystickEl.addEventListener('pointerup', onJoyUp);
     joystickEl.addEventListener('pointercancel', onJoyUp);
+    joystickEl.addEventListener('lostpointercapture', () => {
+      joyPointerId = null;
+      joyAxisX = 0;
+      joyJumpActive = false;
+      if (knobEl) knobEl.style.transform = 'translate(0px, 0px)';
+    });
   }
 
   bindTouchButton(btnJump, 'jump');
@@ -221,6 +247,7 @@ export function createInputManager({ joystickEl, knobEl, btnJump, btnSmash, btnR
       justPressed.action = false;
       return snap;
     },
+    setJoystickRadius,
     clearAll,
     hasTouchHardware() {
       return (

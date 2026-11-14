@@ -1,64 +1,60 @@
-# Volleyball 2D — Handoff & Architecture Guide
+# Volleyball 2D — Engineering Handoff
 
-## 1. Project Structure
+## 1. Architecture & File Structure
+Pure static HTML + CSS + ES Modules (`<script type="module">`) with zero frameworks, zero build steps, and zero external image, audio, or font assets. Deployable directly to GitHub Pages.
 
-Pure static HTML + CSS + JavaScript ES Modules designed for direct GitHub Pages deployment with zero build steps, zero frameworks, and zero external assets.
-
-```text
+```
 /
-├── index.html             # Viewport shell, SVG title emblem, HUD, touch controls, modals, portrait overlay
-├── css/
-│   └── style.css          # Landscape-first responsive UI, safe-area padding, touch pad, portrait fallback
+├── index.html                  # Semantic UI shell, 1280x720 canvas, structured panels & onboarding overlay
+├── css/style.css               # Responsive landscape layout, safe-area padding, sticky panel headers, touch variants
 ├── js/
-│   ├── main.js            # Entry point wiring core services, screens, and 60fps loop
+│   ├── main.js                 # Bootstrap, loop, first-launch onboarding trigger, Pause<->Settings routing
 │   ├── core/
-│   │   ├── audio.js       # Procedural WebAudio sound effects (serve, receive, set, smash, block, whistle)
-│   │   ├── input.js       # Unified keyboard (Arrows + Space) + Touch virtual joystick & action buttons
-│   │   ├── loop.js        # Clamped delta-time requestAnimationFrame loop
-│   │   ├── save.js        # Versioned localStorage persistence (v1) + v0->v1 migration
-│   │   └── screen.js      # Screen/modal state machine + landscape fullscreen orientation lock helper
+│   │   ├── loop.js             # Fixed-step delta clamp (~1/30s max dt) 60fps loop
+│   │   ├── input.js            # Keyboard + virtual joystick (Compact/Normal/Large) + Arc/Row buttons
+│   │   ├── audio.js            # Procedural WebAudio synth with user-gesture unlock & master volume
+│   │   ├── save.js             # Versioned localStorage persistence (v0->v1->v2), onboardingSeen, records
+│   │   └── screen.js           # Screen & modal router + mobile-only fullscreen/orientation lock
 │   ├── data/
-│   │   └── stats.js       # 2v2 team rosters and stat-to-physics modifiers (smash, receive, block, serve)
+│   │   └── stats.js            # 2v2 team rosters (SOLARIS DUO vs COASTAL APEX) + smash/receive/block/serve/speed curves
 │   ├── game/
-│   │   ├── ai.js          # Teammate auto-feed AI & Away opponent 2v2 AI
-│   │   ├── ball.js        # Ball kinematics, net/floor collision, and landing prediction
-│   │   ├── player.js      # Player physics, jump buffering, variable jump cut, squash & stretch
-│   │   ├── renderer.js    # Canvas 2D renderer (1280x720 logical space, cached offscreen backdrop, particles)
-│   │   └── rules.js       # 2v2 rules: serve, receive, auto-feed, smash timing, block, rally point to 15
+│   │   ├── ball.js             # Gravity, speed-proportional air drag, Magnus spin, spin decay, net/floor collisions
+│   │   ├── player.js           # Acceleration/deceleration, reduced air control, speed-driven jump, landing recovery, net touch
+│   │   ├── ai.js               # Setter & Attacker roles, reaction interval (Casual/Pro), positioning noise, Casual mistakes
+│   │   ├── rules.js            # Pure state machine: serve baseline, 3-touch, double-touch, block exemption, rotation, scoring
+│   │   └── renderer.js         # Cached arena backdrop, keyframe poses, squash/stretch, airborne smash timing ring
 │   └── screen/
-│       ├── match.js       # In-match HUD sync, pause/result modals, audio event dispatch
-│       ├── menu.js        # Main menu roster stats display and record readout
-│       └── settings.js    # Sound, touch controls mode, difficulty, and record reset
-└── HANDOFF.md
+│       ├── menu.js             # Play Match, How to Play, Settings, Records + 5-stat roster preview
+│       ├── onboarding.js       # Non-blocking 5-step tutorial highlighting live controls over practice serve
+│       ├── settings.js         # Grouped Audio, Controls, Gameplay, Data sections + inline confirm-reset
+│       ├── records.js          # Wins, losses, win rate, best rally, longest match, matches played
+│       └── match.js            # HUD (rally/rotation/server/target), touch layout sync, Pause/Result table
+└── tests/
+    └── game.test.mjs           # Node native unit + 40-match AI-vs-AI simulation suite
 ```
 
 ## 2. Design Decisions
-
-- **Pure DOM-Free Simulation**: Everything inside `js/game/` and `js/data/` operates purely on state objects with zero DOM or Canvas references, making rules/physics unit-testable in Node and portable.
-- **Logical 1280x720 Uniform Scaling**: `renderer.js` scales the 1280x720 court uniformly into the live viewport (`Math.min(viewW / 1280, viewH / 720)`) and paints seamless sky/floor-apron wings on wider mobile aspect ratios (such as `844x390`) so circles and characters never stretch.
-- **Mobile 60 FPS Performance**: Static sky, bleachers, and court markings are cached once onto an offscreen canvas (`bgCanvas`). Particles use a pre-allocated 48-slot ring buffer to prevent GC spikes during rallies. No CSS `backdrop-filter` is used over the canvas.
-- **2v2 Auto-Feed Flow**: Touch 1 (`Receive`) pops the ball cleanly to the setter (`Mina`), who automatically sets Touch 2 (`AUTO-FEED!`) into the attack lane with a smash timing ring, letting the human player focus on jump timing and `Smash` execution (while still allowing quick Touch 2 hits).
-- **Landscape Enforcement**: CSS `@media (orientation: portrait)` immediately displays `#rotate-overlay` ("Rotate your phone"). Pressing Play also attempts `requestFullscreen()` + `screen.orientation.lock('landscape')` safely inside `try/catch`.
-- **Offline & Safe-Area Ready**: Uses `viewport-fit=cover`, `env(safe-area-inset-*)`, `touch-action: none`, `user-select: none`, and system fonts + procedural Canvas/WebAudio so it works 100% offline.
+- **Pure Logic Separation**: `js/data/stats.js`, `js/core/save.js`, `js/game/ball.js`, `js/game/player.js`, `js/game/ai.js`, and `js/game/rules.js` have zero DOM/Canvas imports and run directly under Node (`node --test tests/game.test.mjs`).
+- **Realistic 2v2 Rules**:
+  - **Serve**: Server starts behind baseline (`COURT.LEFT_X - 32` or `COURT.RIGHT_X + 32`); legal serve clears net and lands in opponent court (untouched = Ace); net hit or out = Service Error.
+  - **Touch Limit & Double Touch**: Maximum 3 touches per side (4th touch = fault); same player cannot touch consecutively unless their previous touch was a net block.
+  - **Block Exemption**: Valid only when jumping near the net (`|x - NET_X| <= 95`); block does not count toward the 3-touch limit.
+  - **Rotation**: Clockwise rotation (`1 <-> 2`) and server swap occur only when the receiving team wins the rally (side-out).
+- **Non-Cheating AI**: Both `Casual` and `Pro` share `predictBallLandingX` sampled only at reaction intervals (`0.24s` vs `0.07s`) with positioning noise (`±44px` vs `±12px`), plus occasional `Casual` mistakes (late jumps, off-target smashes, rare net lunge).
+- **Non-Blocking Onboarding**: First launch runs `practiceMode: true` underneath the dimmed tutorial overlay and forces touch buttons visible while highlighting `#touch-joystick`, `#touch-btn-jump`, `#touch-btn-receive`, `#onboarding-ball-ring`, and `#touch-btn-smash`.
 
 ## 3. Adjustable Constants
+- `js/game/ball.js`: `COURT` (`1280x720`, `FLOOR_Y=620`, `LEFT_X=90`, `RIGHT_X=1190`, `NET_X=640`, `NET_TOP_Y=380`), `BALL_CFG` (`GRAVITY=1080`, `AIR_DRAG_K=0.00016`, `MAGNUS_K=0.022`, `SPIN_DECAY=0.65`, `MAX_SPEED=1360`).
+- `js/game/player.js`: `PLAYER_CFG` (`GRAVITY=1760`, `NET_BUFFER=26`, `NET_FAULT_ZONE=18`, `AIR_CONTROL_MULT=0.45`, `LANDING_RECOVERY_DURATION=0.11`).
+- `js/data/stats.js`: `TEAMS` player attributes (`smash`, `receive`, `block`, `serve`, `speed`) and profile scaling functions.
+- `js/game/ai.js`: Reaction interval (`0.07s` Pro / `0.24s` Casual), landing noise (`12px` Pro / `44px` Casual), `wantNetMistake` probability (`0.06` Casual).
+- `js/core/save.js`: `CURRENT_SAVE_VERSION = 2`, default settings (`volume=0.8`, `joystickSize='normal'`, `buttonLayout='arc'`, `targetPoints=15`).
 
-- **Court & Net (`js/game/ball.js`)**:
-  - `COURT.FLOOR_Y` (`620`), `COURT.LEFT_X` (`90`), `COURT.RIGHT_X` (`1190`), `COURT.NET_X` (`640`), `COURT.NET_TOP_Y` (`380`)
-  - `BALL_CFG.RADIUS` (`20`), `BALL_CFG.GRAVITY` (`1080`), `BALL_CFG.MAX_SPEED` (`1380`)
-- **Player Movement (`js/game/player.js`)**:
-  - `PLAYER_CFG.SPEED` (`370`), `PLAYER_CFG.AI_SPEED` (`335`), `PLAYER_CFG.JUMP_VY` (`-650`), `PLAYER_CFG.GRAVITY` (`1760`)
-- **Match Rules (`js/game/rules.js`)**:
-  - `TARGET_POINTS` (`15`, win by 2)
-  - `evaluateSmashTiming`: `PERFECT` vertical window (`<= 28 + bonus`), `GOOD` (`<= 58`)
-- **Stat Curves (`js/data/stats.js`)**:
-  - `TEAMS.home.players` (`Kai #7`, `Mina #4`) and `TEAMS.away.players` (`Ren #11`, `Sora #2`)
-  - `getServeProfile`, `getReceiveProfile`, `getSmashProfile`, `getBlockProfile`
+## 4. Verification Summary
+- Automated tests: `node --test tests/game.test.mjs` (11 tests including 40 full AI-vs-AI match simulations).
+- Headless browser check: Verified `1280x720`, `844x390` mobile landscape, and `390x844` portrait fallback with 0 console/page errors.
 
-## 4. Next Steps (Stage 2+ Roadmap)
-
-1. **Team & Athlete Selection**: Allow picking between multiple preset 2v2 clubs or customizing player stats before starting a match.
-2. **Tournament / Best-of-3 Sets**: Add multi-set match structure and a 3-round coastal tournament ladder saved in `save.js` (incrementing `CURRENT_SAVE_VERSION` to `2` with migration).
-3. **Service Worker (Offline Cache)**: Register a lightweight `sw.js` in `index.html` for full Add-to-Home-Screen offline play on GitHub Pages.
-4. **Diving Save & Jump Serve**: Add a directional dash/dive-dig animation on double-tap or dedicated gesture, plus a timed toss-and-jump serve mechanic.
-5. **Local 2-Player / Match Replay**: Add optional split-keyboard controls or rally highlight replay buffer.
+## 5. Recommended Next Steps
+- Add character/team selector on Main Menu (swap teams or customize Kai/Mina stats).
+- Add Best-of-3 sets option alongside single-set 11/15/21.
+- Add dive-save visual animation for desperate low receives near the floor.

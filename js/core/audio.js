@@ -1,14 +1,15 @@
-// Procedural WebAudio synthesizer for Volleyball 2D (zero external audio files)
+// Procedural WebAudio synthesizer for Volleyball 2D with master volume (zero external audio files)
 
 class SoundEngine {
   constructor() {
     this.ctx = null;
     this.muted = false;
     this.unlocked = false;
+    this.volume = 0.8;
   }
 
   ensureContext() {
-    if (this.muted || !this.unlocked) return null;
+    if (this.muted || !this.unlocked || this.volume <= 0.001) return null;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return null;
@@ -33,9 +34,20 @@ class SoundEngine {
     return this.muted;
   }
 
+  setVolume(vol) {
+    this.volume = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 0.8));
+  }
+
+  getVolume() {
+    return this.volume;
+  }
+
   playTone({ freq = 440, endFreq = null, duration = 0.1, type = 'sine', gain = 0.18, delay = 0 }) {
     const ctx = this.ensureContext();
     if (!ctx) return;
+
+    const scaledGain = gain * this.volume;
+    if (scaledGain <= 0.0005) return;
 
     const now = ctx.currentTime + delay;
     const osc = ctx.createOscillator();
@@ -47,7 +59,7 @@ class SoundEngine {
     }
 
     amp.gain.setValueAtTime(0.0001, now);
-    amp.gain.linearRampToValueAtTime(gain, now + 0.01);
+    amp.gain.linearRampToValueAtTime(scaledGain, now + 0.01);
     amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
     osc.connect(amp);
@@ -59,6 +71,9 @@ class SoundEngine {
   playNoiseBurst({ duration = 0.06, filterFreq = 900, gain = 0.15 }) {
     const ctx = this.ensureContext();
     if (!ctx) return;
+
+    const scaledGain = gain * this.volume;
+    if (scaledGain <= 0.0005) return;
 
     const sampleCount = Math.max(1, Math.floor(ctx.sampleRate * duration));
     const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
@@ -76,7 +91,7 @@ class SoundEngine {
     filter.Q.value = 1.2;
 
     const amp = ctx.createGain();
-    amp.gain.setValueAtTime(gain, ctx.currentTime);
+    amp.gain.setValueAtTime(scaledGain, ctx.currentTime);
     amp.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
 
     src.connect(filter);

@@ -14,11 +14,9 @@
   <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body data-state="title">
-  <!-- Main Viewport Stage -->
   <main id="app" class="app-shell">
     <canvas id="game-canvas" width="1280" height="720" aria-label="Volleyball 2D Court"></canvas>
 
-    <!-- Screen Overlays (mounted/managed by js/core/screen.js & js/screen/*) -->
     <div id="ui-layer" class="ui-layer">
       <!-- Title / Main Menu Screen -->
       <section id="screen-menu" class="screen screen-menu is-active" aria-label="Main Menu">
@@ -32,28 +30,24 @@
                     <stop offset="100%" stop-color="#F29F05" />
                   </linearGradient>
                 </defs>
-                <!-- Crest Ball Icon -->
                 <g transform="translate(8, 12)">
                   <circle cx="44" cy="44" r="40" fill="#FFFDF8" stroke="#18293E" stroke-width="5" />
                   <path d="M12 30 C30 20, 56 20, 76 34" fill="none" stroke="#E84A27" stroke-width="5" stroke-linecap="round" />
                   <path d="M14 58 C34 44, 58 46, 76 58" fill="none" stroke="#0E7C7B" stroke-width="5" stroke-linecap="round" />
                   <path d="M44 6 C38 28, 38 60, 44 82" fill="none" stroke="#18293E" stroke-width="4.5" stroke-linecap="round" />
                 </g>
-                <!-- Display Wordmark -->
                 <text x="104" y="54" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="38" letter-spacing="-1" fill="#18293E">VOLLEYBALL</text>
                 <rect x="104" y="66" width="154" height="8" rx="4" fill="url(#courtStripe)" />
                 <text x="270" y="84" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="34" fill="#E84A27">2D</text>
               </svg>
             </div>
-            <p class="menu-subtitle">2v2 Side-View Rally · First to 15</p>
+            <p class="menu-subtitle" id="menu-subtitle">2v2 Side-View Rally · First to 15</p>
 
             <div class="menu-actions">
-              <button id="btn-play" type="button" class="btn btn-primary" data-start="true">
-                Play Match
-              </button>
-              <button id="btn-settings" type="button" class="btn btn-secondary">
-                Settings
-              </button>
+              <button id="btn-play" type="button" class="btn btn-primary" data-start="true">Play Match</button>
+              <button id="btn-how-to-play" type="button" class="btn btn-secondary">How to Play</button>
+              <button id="btn-settings" type="button" class="btn btn-secondary">Settings</button>
+              <button id="btn-records" type="button" class="btn btn-secondary">Records</button>
             </div>
 
             <p class="control-hint-line" id="menu-controls-hint">
@@ -68,7 +62,7 @@
         </div>
       </section>
 
-      <!-- Settings Screen -->
+      <!-- Settings Screen (Grouped Sections) -->
       <section id="screen-settings" class="screen screen-settings" aria-label="Settings" hidden>
         <div class="panel-card settings-card">
           <div class="panel-header">
@@ -76,51 +70,138 @@
             <button id="btn-settings-back" type="button" class="btn btn-ghost">Back</button>
           </div>
 
-          <div class="settings-list">
-            <div class="setting-row">
-              <div class="setting-meta">
-                <span class="setting-label">Sound Effects</span>
-                <span class="setting-desc">WebAudio court hits, whistles, and crowd chimes</span>
+          <div class="settings-sections">
+            <!-- Audio Section -->
+            <div class="settings-section">
+              <h2 class="section-heading">Audio</h2>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Sound Effects</span>
+                  <span class="setting-desc">WebAudio court hits, whistles, and chimes</span>
+                </div>
+                <button id="toggle-sound" type="button" class="toggle-btn" aria-pressed="true">On</button>
               </div>
-              <button id="toggle-sound" type="button" class="toggle-btn" aria-pressed="true">On</button>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Volume</span>
+                  <span class="setting-desc" id="volume-value-label">80%</span>
+                </div>
+                <input id="range-volume" type="range" min="0" max="100" step="5" value="80" class="range-slider" aria-label="Volume" />
+              </div>
             </div>
 
-            <div class="setting-row">
-              <div class="setting-meta">
-                <span class="setting-label">Touch Controls</span>
-                <span class="setting-desc">Virtual joystick &amp; action buttons on screen</span>
+            <!-- Controls Section -->
+            <div class="settings-section">
+              <h2 class="section-heading">Controls</h2>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Touch Controls</span>
+                  <span class="setting-desc">Virtual joystick &amp; action buttons</span>
+                </div>
+                <div class="segmented-group" role="group" aria-label="Touch Controls Mode">
+                  <button type="button" class="seg-btn" data-touch-mode="auto">Auto</button>
+                  <button type="button" class="seg-btn" data-touch-mode="on">On</button>
+                  <button type="button" class="seg-btn" data-touch-mode="off">Off</button>
+                </div>
               </div>
-              <div class="segmented-group" role="group" aria-label="Touch Controls Mode">
-                <button type="button" class="seg-btn" data-touch-mode="auto">Auto</button>
-                <button type="button" class="seg-btn" data-touch-mode="on">On</button>
-                <button type="button" class="seg-btn" data-touch-mode="off">Off</button>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Joystick Size</span>
+                  <span class="setting-desc">Thumb pad diameter on touch screens</span>
+                </div>
+                <div class="segmented-group" role="group" aria-label="Joystick Size">
+                  <button type="button" class="seg-btn" data-joystick-size="compact">Compact</button>
+                  <button type="button" class="seg-btn" data-joystick-size="normal">Normal</button>
+                  <button type="button" class="seg-btn" data-joystick-size="large">Large</button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Button Layout</span>
+                  <span class="setting-desc">Right-thumb arrangement</span>
+                </div>
+                <div class="segmented-group" role="group" aria-label="Button Layout">
+                  <button type="button" class="seg-btn" data-button-layout="arc">Arc</button>
+                  <button type="button" class="seg-btn" data-button-layout="row">Row</button>
+                </div>
               </div>
             </div>
 
-            <div class="setting-row">
-              <div class="setting-meta">
-                <span class="setting-label">Opponent AI</span>
-                <span class="setting-desc">Reaction speed and blocking aggression</span>
+            <!-- Gameplay Section -->
+            <div class="settings-section">
+              <h2 class="section-heading">Gameplay</h2>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Opponent AI</span>
+                  <span class="setting-desc">Reaction speed, accuracy, and block rate</span>
+                </div>
+                <div class="segmented-group" role="group" aria-label="AI Difficulty">
+                  <button type="button" class="seg-btn" data-difficulty="casual">Casual</button>
+                  <button type="button" class="seg-btn" data-difficulty="pro">Pro</button>
+                </div>
               </div>
-              <div class="segmented-group" role="group" aria-label="AI Difficulty">
-                <button type="button" class="seg-btn" data-difficulty="casual">Casual</button>
-                <button type="button" class="seg-btn" data-difficulty="pro">Pro</button>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Match Length</span>
+                  <span class="setting-desc">Rally point target (win by 2)</span>
+                </div>
+                <div class="segmented-group" role="group" aria-label="Match Length">
+                  <button type="button" class="seg-btn" data-target-points="11">11</button>
+                  <button type="button" class="seg-btn" data-target-points="15">15</button>
+                  <button type="button" class="seg-btn" data-target-points="21">21</button>
+                </div>
               </div>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Tutorial</span>
+                  <span class="setting-desc">Replay the 5-step interactive court guide</span>
+                </div>
+                <button id="btn-show-tutorial" type="button" class="btn btn-secondary btn-sm">Show Tutorial Again</button>
+              </div>
+            </div>
+
+            <!-- Data Section -->
+            <div class="settings-section">
+              <h2 class="section-heading">Data</h2>
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-label">Match Records</span>
+                  <span class="setting-desc">Clear saved wins, losses, and rally bests</span>
+                </div>
+                <div class="confirm-reset-wrap">
+                  <button id="btn-reset-save" type="button" class="btn btn-danger-outline btn-sm">Reset Records</button>
+                  <div id="reset-confirm-group" class="confirm-group" hidden>
+                    <button id="btn-reset-confirm" type="button" class="btn btn-danger btn-sm">Confirm</button>
+                    <button id="btn-reset-cancel" type="button" class="btn btn-ghost btn-sm">Cancel</button>
+                  </div>
+                </div>
+              </div>
+              <span id="settings-save-status" class="save-status" aria-live="polite"></span>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div class="settings-footer">
-            <button id="btn-reset-save" type="button" class="btn btn-danger-outline">Reset Match Record</button>
-            <span id="settings-save-status" class="save-status" aria-live="polite"></span>
+      <!-- Records Screen -->
+      <section id="screen-records" class="screen screen-records" aria-label="Records" hidden>
+        <div class="panel-card records-card">
+          <div class="panel-header">
+            <h1 class="panel-title">Match Records</h1>
+            <button id="btn-records-back" type="button" class="btn btn-ghost">Back</button>
           </div>
+          <div id="records-grid" class="records-grid"></div>
         </div>
       </section>
 
       <!-- Active Match HUD & Touch Controls -->
       <section id="screen-match" class="screen screen-match" aria-label="Match HUD" hidden>
-        <!-- Top Scoreboard Strip -->
         <header class="match-hud-top">
-          <div class="hud-left-spacer"></div>
+          <div class="hud-meta-pill">
+            <span id="hud-rally-counter">Rally 1</span>
+            <span class="meta-sep">·</span>
+            <span id="hud-rotation-server">R1 · #7 Kai</span>
+          </div>
+
           <div class="scoreboard" aria-live="polite">
             <div class="score-team score-home">
               <span class="team-tag" id="hud-home-name">SOLARIS</span>
@@ -128,7 +209,7 @@
               <span class="score-num" id="hud-score-home">0</span>
             </div>
             <div class="score-divider">
-              <span class="score-target">TO 15</span>
+              <span class="score-target" id="hud-target-points">TO 15</span>
             </div>
             <div class="score-team score-away">
               <span class="score-num" id="hud-score-away">0</span>
@@ -136,6 +217,7 @@
               <span class="team-tag" id="hud-away-name">APEX</span>
             </div>
           </div>
+
           <div class="hud-top-actions">
             <button id="btn-hud-mute" type="button" class="icon-btn" aria-label="Toggle Sound" tabindex="-1">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -152,18 +234,17 @@
           </div>
         </header>
 
-        <!-- Contextual Rally Callout Banner (Serve / Match Point / Point Scored) -->
         <div id="hud-callout" class="hud-callout" hidden></div>
 
-        <!-- Touch Controls Overlay (left virtual joystick + right Jump / Smash / Receive) -->
-        <div id="touch-controls" class="touch-controls" hidden>
+        <!-- Touch Controls Overlay -->
+        <div id="touch-controls" class="touch-controls joy-normal layout-arc" hidden>
           <div id="touch-joystick" class="joystick-zone" aria-label="Move Joystick">
             <div class="joystick-base">
               <div id="joystick-knob" class="joystick-knob"></div>
             </div>
           </div>
 
-          <div class="action-pad">
+          <div class="action-pad" id="touch-action-pad">
             <button id="touch-btn-receive" type="button" class="touch-action-btn touch-receive" aria-label="Receive or Serve">
               <span class="touch-btn-label" id="touch-receive-label">RECV</span>
             </button>
@@ -173,6 +254,23 @@
             <button id="touch-btn-jump" type="button" class="touch-action-btn touch-jump" aria-label="Jump">
               <span class="touch-btn-label">JUMP</span>
             </button>
+          </div>
+        </div>
+
+        <!-- Non-blocking Onboarding Tutorial Overlay -->
+        <div id="onboarding-overlay" class="onboarding-overlay" role="dialog" aria-label="How to Play Tutorial" hidden>
+          <div id="onboarding-ball-ring" class="onboarding-ball-ring" hidden></div>
+          <div class="onboarding-card">
+            <div class="onboarding-top">
+              <span class="onboarding-step-label" id="onboarding-step-label">Step 1 of 5</span>
+              <button id="btn-onboarding-skip" type="button" class="btn btn-ghost btn-sm">Skip</button>
+            </div>
+            <h2 id="onboarding-title" class="onboarding-title">Move</h2>
+            <p id="onboarding-desc" class="onboarding-desc"></p>
+            <div class="onboarding-actions">
+              <button id="btn-onboarding-prev" type="button" class="btn btn-secondary btn-sm">Back</button>
+              <button id="btn-onboarding-next" type="button" class="btn btn-primary btn-sm">Next</button>
+            </div>
           </div>
         </div>
       </section>
@@ -185,7 +283,8 @@
           <div class="modal-actions">
             <button id="btn-resume" type="button" class="btn btn-primary">Resume</button>
             <button id="btn-restart-match" type="button" class="btn btn-secondary">Restart Match</button>
-            <button id="btn-quit-menu" type="button" class="btn btn-ghost">Main Menu</button>
+            <button id="btn-pause-settings" type="button" class="btn btn-secondary">Settings</button>
+            <button id="btn-quit-menu" type="button" class="btn btn-ghost">Quit to Menu</button>
           </div>
         </div>
       </div>
@@ -207,9 +306,24 @@
             </div>
           </div>
           <div class="result-stats-row" id="result-stats-row"></div>
+          <div class="result-player-table-wrap">
+            <table class="result-player-table" aria-label="Player Match Statistics">
+              <thead>
+                <tr>
+                  <th>Player</th>
+                  <th>PTS</th>
+                  <th>ACE</th>
+                  <th>SMASH</th>
+                  <th>BLK</th>
+                  <th>ERR</th>
+                </tr>
+              </thead>
+              <tbody id="result-player-tbody"></tbody>
+            </table>
+          </div>
           <div class="modal-actions">
             <button id="btn-play-again" type="button" class="btn btn-primary" data-start="true">Play Again</button>
-            <button id="btn-result-menu" type="button" class="btn btn-secondary">Main Menu</button>
+            <button id="btn-result-menu" type="button" class="btn btn-secondary">Menu</button>
           </div>
         </div>
       </div>

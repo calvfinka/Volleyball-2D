@@ -1,4 +1,4 @@
-// Pure ball physics module (no DOM dependencies)
+// Pure ball physics module with gravity, proportional air drag, and Magnus spin effect (no DOM dependencies)
 
 export const COURT = {
   WIDTH: 1280,
@@ -15,20 +15,21 @@ export const COURT = {
 export const BALL_CFG = {
   RADIUS: 20,
   GRAVITY: 1080,
-  AIR_DRAG: 0.999,
-  MAX_SPEED: 1380,
+  AIR_DRAG_K: 0.00016,  // proportional to speed: a_drag = -k * speed * v
+  MAGNUS_K: 0.022,      // perpendicular spin force coefficient
+  SPIN_DECAY: 0.65,     // exponential spin decay rate (1/s)
+  MAX_SPEED: 1360,
   TRAIL_LENGTH: 10,
 };
 
 export function createBall() {
   return {
-    x: 160,
-    y: 490,
+    x: 62,
+    y: 520,
     vx: 0,
     vy: 0,
     spin: 0,
     angle: 0,
-    topspinAccel: 0,
     active: false,
     lastHitByTeam: null, // 'home' | 'away'
     lastHitById: null,
@@ -42,21 +43,19 @@ export function resetBallForServe(ball, servingTeam) {
   ball.vx = 0;
   ball.vy = 0;
   ball.spin = 0;
-  ball.topspinAccel = 0;
   ball.active = false;
   ball.lastHitByTeam = servingTeam;
   ball.lastHitById = null;
   ball.lastHitType = 'none';
   ball.isAutoFeed = false;
   ball.trail.length = 0;
-  ball.x = servingTeam === 'home' ? COURT.LEFT_X + 68 : COURT.RIGHT_X - 68;
-  ball.y = COURT.FLOOR_Y - 108;
+  ball.x = servingTeam === 'home' ? COURT.LEFT_X - 24 : COURT.RIGHT_X + 24;
+  ball.y = COURT.FLOOR_Y - 104;
 }
 
 export function stepBallPhysics(ball, dt) {
   if (!ball.active) return { hitFloor: false, hitNet: false };
 
-  // Save trail point for smash/fast shots
   ball.trail.push({ x: ball.x, y: ball.y });
   if (ball.trail.length > BALL_CFG.TRAIL_LENGTH) {
     ball.trail.shift();
@@ -65,21 +64,33 @@ export function stepBallPhysics(ball, dt) {
   const prevX = ball.x;
   const prevY = ball.y;
 
-  // Apply gravity + optional serve/smash topspin dip
-  ball.vy += (BALL_CFG.GRAVITY + ball.topspinAccel) * dt;
-  ball.vx *= Math.pow(BALL_CFG.AIR_DRAG, dt * 60);
-
-  // Clamp max velocity
+  // Speed-proportional air drag + Magnus spin force
   const speed = Math.hypot(ball.vx, ball.vy);
-  if (speed > BALL_CFG.MAX_SPEED) {
-    const scale = BALL_CFG.MAX_SPEED / speed;
+  const dragFactor = BALL_CFG.AIR_DRAG_K * speed;
+  const axDrag = -dragFactor * ball.vx;
+  const ayDrag = -dragFactor * ball.vy;
+
+  const axMagnus = -ball.spin * ball.vy * BALL_CFG.MAGNUS_K * 0.35;
+  const ayMagnus = ball.spin * ball.vx * BALL_CFG.MAGNUS_K;
+
+  ball.vx += (axDrag + axMagnus) * dt;
+  ball.vy += (BALL_CFG.GRAVITY + ayDrag + ayMagnus) * dt;
+
+  // Spin decays gradually in flight
+  ball.spin *= Math.exp(-BALL_CFG.SPIN_DECAY * dt);
+  if (Math.abs(ball.spin) < 0.05) ball.spin = 0;
+
+  // Clamp max speed
+  const nextSpeed = Math.hypot(ball.vx, ball.vy);
+  if (nextSpeed > BALL_CFG.MAX_SPEED) {
+    const scale = BALL_CFG.MAX_SPEED / nextSpeed;
     ball.vx *= scale;
     ball.vy *= scale;
   }
 
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
-  ball.angle += ball.spin * dt;
+  ball.angle += (ball.spin || ball.vx * 0.012) * dt;
 
   // Soft ceiling clamp
   if (ball.y - BALL_CFG.RADIUS < COURT.CEILING_Y) {
@@ -87,13 +98,13 @@ export function stepBallPhysics(ball, dt) {
     if (ball.vy < 0) ball.vy *= -0.35;
   }
 
-  // Stadium side walls (far outside court lines so out-of-bounds still triggers cleanly)
-  if (ball.x - BALL_CFG.RADIUS < 16) {
-    ball.x = 16 + BALL_CFG.RADIUS;
-    ball.vx = Math.abs(ball.vx) * 0.55;
-  } else if (ball.x + BALL_CFG.RADIUS > COURT.WIDTH - 16) {
-    ball.x = COURT.WIDTH - 16 - BALL_CFG.RADIUS;
-    ball.vx = -Math.abs(ball.vx) * 0.55;
+  // Far outer stadium bounds
+  if (ball.x - BALL_CFG.RADIUS < 12) {
+    ball.x = 12 + BALL_CFG.RADIUS;
+    ball.vx = Math.abs(ball.vx) * 0.5;
+  } else if (ball.x + BALL_CFG.RADIUS > COURT.WIDTH - 12) {
+    ball.x = COURT.WIDTH - 12 - BALL_CFG.RADIUS;
+    ball.vx = -Math.abs(ball.vx) * 0.5;
   }
 
   // Net collision check
@@ -103,13 +114,12 @@ export function stepBallPhysics(ball, dt) {
   const netTop = COURT.NET_TOP_Y;
 
   if (ball.y + BALL_CFG.RADIUS > netTop && ball.y - BALL_CFG.RADIUS < COURT.FLOOR_Y) {
-    // Check top tape collision first
     const dxTop = ball.x - COURT.NET_X;
     const dyTop = ball.y - netTop;
     const distTop = Math.hypot(dxTop, dyTop);
     const topRadius = BALL_CFG.RADIUS + COURT.NET_HALF_W;
 
-    if (distTop < topRadius && prevY <= netTop + 12) {
+    if (distTop < topRadius && prevY <= netTop + 14) {
       hitNet = true;
       const nx = distTop > 0.001 ? dxTop / distTop : 0;
       const ny = distTop > 0.001 ? dyTop / distTop : -1;
@@ -117,22 +127,21 @@ export function stepBallPhysics(ball, dt) {
       ball.y = netTop + ny * (topRadius + 1);
       const dot = ball.vx * nx + ball.vy * ny;
       if (dot < 0) {
-        ball.vx = (ball.vx - 2 * dot * nx) * 0.65;
-        ball.vy = (ball.vy - 2 * dot * ny) * 0.65;
+        ball.vx = (ball.vx - 2 * dot * nx) * 0.6;
+        ball.vy = (ball.vy - 2 * dot * ny) * 0.6;
       }
-      ball.topspinAccel = 0;
+      ball.spin *= 0.4;
     } else if (ball.x + BALL_CFG.RADIUS > netLeft && ball.x - BALL_CFG.RADIUS < netRight) {
-      // Side of net mesh
       hitNet = true;
       if (prevX <= COURT.NET_X) {
         ball.x = netLeft - BALL_CFG.RADIUS - 1;
-        ball.vx = -Math.abs(ball.vx) * 0.48;
+        ball.vx = -Math.abs(ball.vx) * 0.45;
       } else {
         ball.x = netRight + BALL_CFG.RADIUS + 1;
-        ball.vx = Math.abs(ball.vx) * 0.48;
+        ball.vx = Math.abs(ball.vx) * 0.45;
       }
-      ball.vy *= 0.8;
-      ball.topspinAccel = 0;
+      ball.vy *= 0.75;
+      ball.spin *= 0.4;
     }
   }
 
@@ -152,10 +161,14 @@ export function predictBallLandingX(ball) {
   let y = ball.y;
   let vx = ball.vx;
   let vy = ball.vy;
-  const g = BALL_CFG.GRAVITY + ball.topspinAccel;
+  let spin = ball.spin;
   const dt = 1 / 60;
-  for (let i = 0; i < 180; i++) {
-    vy += g * dt;
+  for (let i = 0; i < 160; i++) {
+    const speed = Math.hypot(vx, vy);
+    const drag = BALL_CFG.AIR_DRAG_K * speed;
+    vx += (-drag * vx - spin * vy * BALL_CFG.MAGNUS_K * 0.35) * dt;
+    vy += (BALL_CFG.GRAVITY - drag * vy + spin * vx * BALL_CFG.MAGNUS_K) * dt;
+    spin *= Math.exp(-BALL_CFG.SPIN_DECAY * dt);
     x += vx * dt;
     y += vy * dt;
     if (y + BALL_CFG.RADIUS >= COURT.FLOOR_Y) {

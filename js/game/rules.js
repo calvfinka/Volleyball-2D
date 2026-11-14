@@ -1,48 +1,87 @@
-// Volleyball match state machine, rules, serve/receive/auto-feed/smash-timing/block, and scoring (no DOM dependencies)
+// Volleyball match state machine, explicit rules, rotation, per-player stats, and rally scoring (no DOM dependencies)
 
 import { TEAMS, getServeProfile, getReceiveProfile, getSmashProfile, getBlockProfile } from '../data/stats.js';
 import { COURT, BALL_CFG, createBall, resetBallForServe, stepBallPhysics } from './ball.js';
 import { createPlayer, resetPlayerPosition, stepPlayerPhysics } from './player.js';
-import { computeTeammateControl, computeOpponentControl } from './ai.js';
+import { createAiMemory, computeTeammateControl, computeOpponentControl } from './ai.js';
 
-export const TARGET_POINTS = 15;
+export const DEFAULT_TARGET_POINTS = 15;
+export const TARGET_POINTS = DEFAULT_TARGET_POINTS;
 
-export function createMatchState(difficulty = 'casual') {
+export function createMatchState(difficulty = 'casual', options = {}) {
+  const targetPoints = [11, 15, 21].includes(options.targetPoints)
+    ? options.targetPoints
+    : DEFAULT_TARGET_POINTS;
+
   const homePlayers = TEAMS.home.players.map((tpl, i) => createPlayer(tpl, 'home', i));
   const awayPlayers = TEAMS.away.players.map((tpl, i) => createPlayer(tpl, 'away', i));
 
+  if (options.aiControlledHome) {
+    homePlayers[0].controlledBy = 'ai';
+  }
+
+  const playerStats = {};
+  for (const p of [...homePlayers, ...awayPlayers]) {
+    playerStats[p.id] = {
+      id: p.id,
+      name: p.name,
+      number: p.number,
+      teamId: p.teamId,
+      points: 0,
+      aces: 0,
+      smashes: 0,
+      blocks: 0,
+      serviceErrors: 0,
+    };
+  }
+
   const state = {
     difficulty,
+    targetPoints,
+    aiControlledHome: Boolean(options.aiControlledHome),
+    practiceMode: Boolean(options.practiceMode),
     phase: 'serve_wait', // 'serve_wait' | 'rally' | 'point_pause' | 'match_over'
     score: { home: 0, away: 0 },
-    targetPoints: TARGET_POINTS,
     servingTeam: 'home',
+    rotation: { home: 1, away: 1 }, // 1 or 2 in 2v2
     homeServerIndex: 0,
     awayServerIndex: 0,
     winner: null,
 
-    // Rally touch tracking (max 3 touches per side)
+    // Rally touch tracking
     possessionSide: null, // 'home' | 'away' | null
     sideTouches: 0,
     lastTouchingPlayerId: null,
+    lastTouchWasBlock: false,
     touchCooldown: 0,
+    rallyNumber: 1,
+    currentRallyVolleys: 0,
+    bestRallyVolleys: 0,
 
-    // Serve / point timers
-    aiServeTimer: 0.9,
+    // Timers & juice
+    aiServeTimer: options.aiControlledHome ? 0.15 : 0.85,
     pointPauseTimer: 0,
     hitstopTimer: 0,
     cameraShake: 0,
     elapsedSeconds: 0,
 
-    // Match telemetry for result screen
+    // Aggregate & per-player stats
     stats: {
       rallies: 0,
       smashes: 0,
       perfectSmashes: 0,
       blocks: 0,
     },
+    playerStats,
 
-    // Active floating feedback & particles (ring buffer for zero-GC)
+    // AI perception buffers (reaction lag)
+    aiMemories: {
+      home0: createAiMemory(),
+      home1: createAiMemory(),
+      away0: createAiMemory(),
+      away1: createAiMemory(),
+    },
+
     callout: { text: 'PRESS SPACE OR RECV TO SERVE', color: '#FFFDF8', timer: 2.5 },
     timingFeedback: { text: '', color: '#F29F05', x: 0, y: 0, timer: 0 },
     particles: createParticlePool(48),
@@ -50,7 +89,7 @@ export function createMatchState(difficulty = 'casual') {
     ball: createBall(),
     homePlayers,
     awayPlayers,
-    events: [], // sound/UI events drained by screen controller each frame
+    events: [],
   };
 
   setupServePositions(state);
@@ -86,30 +125,55 @@ function spawnParticles(pool, x, y, count, color, speed = 190) {
   }
 }
 
+export function getActiveServer(match) {
+  return match.servingTeam === 'home'
+    ? match.homePlayers[match.homeServerIndex]
+    : match.awayPlayers[match.awayServerIndex];
+}
+
 export function setupServePositions(match) {
   match.phase = 'serve_wait';
   match.possessionSide = null;
   match.sideTouches = 0;
   match.lastTouchingPlayerId = null;
+  match.lastTouchWasBlock = false;
   match.touchCooldown = 0;
-  match.aiServeTimer = 0.85;
+  match.currentRallyVolleys = 0;
+  match.aiServeTimer = match.aiControlledHome ? 0.12 : 0.85;
 
   const isHomeServe = match.servingTeam === 'home';
-  match.homePlayers.forEach((p, idx) => resetPlayerPosition(p, isHomeServe && idx === match.homeServerIndex, match.servingTeam));
-  match.awayPlayers.forEach((p, idx) => resetPlayerPosition(p, !isHomeServe && idx === match.awayServerIndex, match.servingTeam));
+  const homeRotOffset = match.rotation.home - 1;
+  const awayRotOffset = match.rotation.away - 1;
+
+  match.homePlayers.forEach((p, idx) =>
+    resetPlayerPosition(p, isHomeServe && idx === match.homeServerIndex, match.servingTeam, homeRotOffset)
+  );
+  match.awayPlayers.forEach((p, idx) =>
+    resetPlayerPosition(p, !isHomeServe && idx === match.awayServerIndex, match.servingTeam, awayRotOffset)
+  );
   resetBallForServe(match.ball, match.servingTeam);
 
-  if (isHomeServe) {
-    match.callout = { text: 'YOUR SERVE — SPACE OR RECV', color: '#FFFDF8', timer: 99 };
+  const server = getActiveServer(match);
+  if (isHomeServe && !match.aiControlledHome && server.controlledBy === 'human') {
+    match.callout = { text: `R${match.rotation.home} · #${server.number} ${server.name.toUpperCase()} TO SERVE`, color: '#FFFDF8', timer: 99 };
   } else {
-    match.callout = { text: 'APEX SERVING...', color: '#7EE3E1', timer: 1.5 };
+    const teamTag = isHomeServe ? TEAMS.home.shortName : TEAMS.away.shortName;
+    match.callout = { text: `${teamTag} R${isHomeServe ? match.rotation.home : match.rotation.away} SERVING...`, color: isHomeServe ? '#FFB59E' : '#7EE3E1', timer: 1.5 };
   }
 }
 
-export function checkMatchWinner(homeScore, awayScore, target = TARGET_POINTS) {
+export function checkMatchWinner(homeScore, awayScore, target = DEFAULT_TARGET_POINTS) {
   if (homeScore >= target && homeScore - awayScore >= 2) return 'home';
   if (awayScore >= target && awayScore - homeScore >= 2) return 'away';
   return null;
+}
+
+export function isDoubleTouch(match, player) {
+  return (
+    match.possessionSide === player.teamId &&
+    match.lastTouchingPlayerId === player.id &&
+    !match.lastTouchWasBlock
+  );
 }
 
 export function executeServe(match, serverPlayer) {
@@ -118,21 +182,32 @@ export function executeServe(match, serverPlayer) {
   const dir = isHome ? 1 : -1;
   const jitter = (Math.random() - 0.5) * profile.spread;
 
+  // Casual AI can occasionally overhit/underhit serves slightly
+  const casualServeMistake =
+    serverPlayer.controlledBy === 'ai' && match.difficulty === 'casual' && Math.random() < 0.08
+      ? (Math.random() < 0.5 ? 160 : -230)
+      : 0;
+
   match.ball.active = true;
   match.ball.x = serverPlayer.x + dir * 24;
-  match.ball.y = serverPlayer.y - 88;
+  match.ball.y = serverPlayer.y - 90;
 
-  const oppCourtStart = isHome ? COURT.NET_X + 110 : COURT.NET_X - 110;
-  const oppCourtSpan = 390;
-  const targetX = oppCourtStart + dir * (oppCourtSpan * profile.targetDepth) + jitter;
+  const oppCourtStart = isHome ? COURT.NET_X + 115 : COURT.NET_X - 115;
+  const oppCourtSpan = 370;
+  const targetX = oppCourtStart + dir * (oppCourtSpan * profile.targetDepth) + jitter + dir * casualServeMistake;
   const targetY = COURT.FLOOR_Y - BALL_CFG.RADIUS;
   const flightTime = profile.flightTime;
-  const g = BALL_CFG.GRAVITY + profile.topspin;
+  const spin = dir * profile.topspin;
+  const vx = (targetX - match.ball.x) / flightTime;
 
-  match.ball.vx = (targetX - match.ball.x) / flightTime;
-  match.ball.vy = (targetY - match.ball.y - 0.5 * g * flightTime * flightTime) / flightTime;
-  match.ball.topspinAccel = profile.topspin;
-  match.ball.spin = dir * 11;
+  // Compensate initial vy for average Magnus topspin dip so legal serves clear the net
+  const avgMagnusDip = spin * vx * BALL_CFG.MAGNUS_K * 0.65;
+  const effG = BALL_CFG.GRAVITY + avgMagnusDip;
+  const vy = (targetY - match.ball.y - 0.5 * effG * flightTime * flightTime) / flightTime;
+
+  match.ball.vx = vx;
+  match.ball.vy = vy;
+  match.ball.spin = spin;
   match.ball.lastHitByTeam = serverPlayer.teamId;
   match.ball.lastHitById = serverPlayer.id;
   match.ball.lastHitType = 'serve';
@@ -147,7 +222,9 @@ export function executeServe(match, serverPlayer) {
   match.possessionSide = null;
   match.sideTouches = 0;
   match.lastTouchingPlayerId = serverPlayer.id;
+  match.lastTouchWasBlock = false;
   match.touchCooldown = 0.16;
+  match.currentRallyVolleys = 1;
   match.callout = { text: '', color: '#FFFDF8', timer: 0 };
 
   spawnParticles(match.particles, match.ball.x, match.ball.y, 10, '#FFFDF8', 170);
@@ -158,7 +235,7 @@ export function evaluateSmashTiming(player, ball) {
   const smashProfile = getSmashProfile(player.stats);
   const handY = player.y - 86;
   const dy = ball.y - handY;
-  const nearApex = Math.abs(player.vy) < 260;
+  const nearApex = Math.abs(player.vy) < 250;
 
   if (Math.abs(dy) <= 28 + smashProfile.perfectWindowBonus && nearApex) {
     return 'PERFECT';
@@ -170,14 +247,21 @@ export function evaluateSmashTiming(player, ball) {
 }
 
 export function executeReceiveOrAutoFeed(match, player, isSetterAutoFeed = false) {
-  const receiveProfile = getReceiveProfile(player.stats);
   const isHome = player.teamId === 'home';
+
+  // Enforce no-double-touch rule (block is the sole exception)
+  if (isDoubleTouch(match, player)) {
+    awardPoint(match, isHome ? 'away' : 'home', 'DOUBLE TOUCH!');
+    return;
+  }
+
+  const receiveProfile = getReceiveProfile(player.stats);
   const ball = match.ball;
 
-  // Determine touch count on this side
   if (match.possessionSide !== player.teamId) {
     match.possessionSide = player.teamId;
     match.sideTouches = 1;
+    match.currentRallyVolleys += 1;
   } else {
     match.sideTouches += 1;
   }
@@ -187,32 +271,28 @@ export function executeReceiveOrAutoFeed(match, player, isSetterAutoFeed = false
     return;
   }
 
-  // Touch 1 (Receive) or Touch 2 (Auto-Feed)
   const isAutoFeedSet = isSetterAutoFeed || match.sideTouches === 2;
   let targetX;
   let flightTime;
 
   if (isHome) {
     if (match.sideTouches === 1) {
-      // First contact: pop cleanly to teammate's set lane or directly into attack lane if teammate initiated
       const teammate = match.homePlayers.find((p) => p.id !== player.id);
-      targetX = player.controlledBy === 'human' && teammate ? Math.max(340, Math.min(500, teammate.x)) : 495;
+      targetX = player.controlledBy === 'human' && teammate ? Math.max(330, Math.min(500, teammate.x)) : 495;
       flightTime = 0.72;
     } else if (match.sideTouches === 2) {
-      // Touch 2 Auto-Feed: Loft a high, juicy smashable set toward the front attack zone!
-      targetX = 505 + (Math.random() - 0.5) * (1 - receiveProfile.setPrecision) * 70;
+      targetX = 505 + (Math.random() - 0.5) * (1 - receiveProfile.setPrecision) * 65;
       flightTime = 1.05;
     } else {
-      // Touch 3 safe free-ball over the net
       targetX = 860 + Math.random() * 140;
       flightTime = 1.15;
     }
   } else {
     if (match.sideTouches === 1) {
-      targetX = 760 + (Math.random() - 0.5) * 60;
+      targetX = 760 + (Math.random() - 0.5) * 55;
       flightTime = 0.74;
     } else if (match.sideTouches === 2) {
-      targetX = 740;
+      targetX = 755;
       flightTime = 0.96;
     } else {
       targetX = 330 + Math.random() * 160;
@@ -220,23 +300,24 @@ export function executeReceiveOrAutoFeed(match, player, isSetterAutoFeed = false
     }
   }
 
-  const targetY = match.sideTouches === 2 ? 320 : 390;
+  const targetY = match.sideTouches === 2 ? 315 : 390;
   const g = BALL_CFG.GRAVITY;
   ball.vx = (targetX - ball.x) / flightTime;
   ball.vy = (targetY - ball.y - 0.5 * g * flightTime * flightTime) / flightTime;
-  ball.topspinAccel = 0;
-  ball.spin = isHome ? 4 : -4;
+  // Soft set gets slight backspin for gentle float
+  ball.spin = isAutoFeedSet ? (isHome ? -3 : 3) : (isHome ? 2 : -2);
   ball.lastHitByTeam = player.teamId;
   ball.lastHitById = player.id;
   ball.lastHitType = isAutoFeedSet ? 'set' : 'receive';
   ball.isAutoFeed = isHome && match.sideTouches === 2;
 
   player.pose = isAutoFeedSet ? 'set' : 'receive';
-  player.poseTimer = 0.24;
+  player.poseTimer = 0.25;
   player.scaleX = 1.14;
   player.scaleY = 0.88;
 
   match.lastTouchingPlayerId = player.id;
+  match.lastTouchWasBlock = false;
   match.touchCooldown = 0.16;
 
   if (ball.isAutoFeed) {
@@ -256,13 +337,21 @@ export function executeReceiveOrAutoFeed(match, player, isSetterAutoFeed = false
 }
 
 export function executeSmash(match, player) {
+  const isHome = player.teamId === 'home';
+
+  // Enforce no-double-touch rule
+  if (isDoubleTouch(match, player)) {
+    awardPoint(match, isHome ? 'away' : 'home', 'DOUBLE TOUCH!');
+    return;
+  }
+
   const ball = match.ball;
   const smashProfile = getSmashProfile(player.stats);
-  const isHome = player.teamId === 'home';
 
   if (match.possessionSide !== player.teamId) {
     match.possessionSide = player.teamId;
     match.sideTouches = 1;
+    match.currentRallyVolleys += 1;
   } else {
     match.sideTouches += 1;
   }
@@ -281,7 +370,7 @@ export function executeSmash(match, player) {
 
   if (timing === 'PERFECT') {
     powerMult = 1.14;
-    vyDown = 360 * smashProfile.steepness * 2.1;
+    vyDown = 360 * smashProfile.steepness * 2.05;
     feedbackColor = '#F29F05';
     match.hitstopTimer = 0.05;
     match.cameraShake = 0.55;
@@ -294,27 +383,30 @@ export function executeSmash(match, player) {
     match.cameraShake = 0.28;
   } else {
     powerMult = 0.74;
-    vyDown = -140; // Early/Late goes in a flatter/higher arc
+    vyDown = -130;
     feedbackColor = '#E2E8F0';
   }
 
-  // Ensure ball clears the net cleanly from player's current X/Y
+  // Casual AI off-target smash variance (can occasionally smash out or low)
+  const casualOffTarget =
+    player.controlledBy === 'ai' && match.difficulty === 'casual' && Math.random() < 0.22
+      ? (Math.random() < 0.5 ? 1.25 : 0.78)
+      : 1.0;
+
   const distToNet = Math.abs(COURT.NET_X - ball.x);
-  const speed = smashProfile.power * powerMult;
+  const speed = smashProfile.power * powerMult * casualOffTarget;
   const vx = dir * speed * (timing === 'PERFECT' ? 0.94 : 0.88);
   const timeToNet = Math.max(0.08, distToNet / Math.abs(vx));
   const projectedYAtNet = ball.y + vyDown * timeToNet + 0.5 * BALL_CFG.GRAVITY * timeToNet * timeToNet;
 
-  // Lift vy slightly if trajectory would clip below net tape
-  if (projectedYAtNet > COURT.NET_TOP_Y - 22) {
-    const neededY = COURT.NET_TOP_Y - 26;
+  if (projectedYAtNet > COURT.NET_TOP_Y - 24 && casualOffTarget <= 1.05) {
+    const neededY = COURT.NET_TOP_Y - 28;
     vyDown = (neededY - ball.y - 0.5 * BALL_CFG.GRAVITY * timeToNet * timeToNet) / timeToNet;
   }
 
   ball.vx = vx;
   ball.vy = vyDown;
-  ball.topspinAccel = timing === 'PERFECT' ? 240 : 120;
-  ball.spin = dir * 24;
+  ball.spin = dir * smashProfile.spin;
   ball.lastHitByTeam = player.teamId;
   ball.lastHitById = player.id;
   ball.lastHitType = 'smash';
@@ -327,8 +419,10 @@ export function executeSmash(match, player) {
   player.scaleY = 1.15;
 
   match.lastTouchingPlayerId = player.id;
+  match.lastTouchWasBlock = false;
   match.touchCooldown = 0.16;
   if (isHome) match.stats.smashes += 1;
+  match.playerStats[player.id].smashes += 1;
 
   match.timingFeedback = {
     text: timing === 'PERFECT' ? 'PERFECT SMASH!' : timing,
@@ -348,8 +442,8 @@ export function tryBlockCollision(match, blocker) {
   if (ball.lastHitByTeam === blocker.teamId) return false;
   if (blocker.onGround) return false;
 
-  const isNearNet = Math.abs(blocker.x - COURT.NET_X) <= 95;
-  if (!isNearNet) return false;
+  // Only a player jumping near the net can block
+  if (Math.abs(blocker.x - COURT.NET_X) > 95) return false;
 
   const blockProfile = getBlockProfile(blocker.stats);
   const blockX = blocker.x + blocker.facing * 18;
@@ -367,30 +461,29 @@ export function tryBlockCollision(match, blocker) {
   if (isStuff) {
     ball.vx = dir * blockProfile.deflectSpeed;
     ball.vy = 230;
-    ball.topspinAccel = 80;
     match.hitstopTimer = 0.045;
     match.cameraShake = 0.45;
     match.timingFeedback = { text: 'STUFF BLOCK!', color: '#F29F05', x: ball.x, y: ball.y - 30, timer: 0.85 };
   } else {
-    // Soft block slows smash onto blocker's own side so defender can receive
     ball.vx = -dir * 180;
     ball.vy = -380;
-    ball.topspinAccel = 0;
     match.timingFeedback = { text: 'SOFT TOUCH', color: '#7EE3E1', x: ball.x, y: ball.y - 30, timer: 0.7 };
   }
 
-  ball.spin = dir * 14;
+  ball.spin = dir * 10;
   ball.lastHitByTeam = blocker.teamId;
   ball.lastHitById = blocker.id;
   ball.lastHitType = 'block';
   ball.isAutoFeed = false;
 
-  // A block touch does NOT count against the team's 3 hits in volleyball rules!
+  // A block is NOT counted as one of the 3 team touches, and allows same player to follow up
   match.possessionSide = isStuff ? null : blocker.teamId;
   match.sideTouches = 0;
   match.lastTouchingPlayerId = blocker.id;
+  match.lastTouchWasBlock = true;
   match.touchCooldown = 0.2;
   if (isHomeBlocker) match.stats.blocks += 1;
+  match.playerStats[blocker.id].blocks += 1;
 
   blocker.pose = 'block';
   blocker.poseTimer = 0.28;
@@ -401,19 +494,42 @@ export function tryBlockCollision(match, blocker) {
   return true;
 }
 
-export function awardPoint(match, scoringTeam, reasonText = '') {
+export function awardPoint(match, scoringTeam, reasonText = '', creditPlayerId = null) {
   if (match.phase === 'point_pause' || match.phase === 'match_over') return;
 
+  if (match.practiceMode) {
+    // Practice mode resets ball smoothly without ending match
+    match.phase = 'point_pause';
+    match.pointPauseTimer = 0.65;
+    match.ball.active = false;
+    match.callout = { text: reasonText || 'NICE RALLY!', color: '#F29F05', timer: 0.65 };
+    return;
+  }
+
+  const prevServingTeam = match.servingTeam;
   match.score[scoringTeam] += 1;
   match.stats.rallies += 1;
-  match.servingTeam = scoringTeam;
+  match.rallyNumber += 1;
+  if (match.currentRallyVolleys > match.bestRallyVolleys) {
+    match.bestRallyVolleys = match.currentRallyVolleys;
+  }
   match.ball.active = false;
 
-  // Rotate server index for the scoring team
-  if (scoringTeam === 'home') {
-    match.homeServerIndex = (match.homeServerIndex + 1) % match.homePlayers.length;
-  } else {
-    match.awayServerIndex = (match.awayServerIndex + 1) % match.awayPlayers.length;
+  // Credit point to scoring player if applicable
+  if (creditPlayerId && match.playerStats[creditPlayerId]?.teamId === scoringTeam) {
+    match.playerStats[creditPlayerId].points += 1;
+  }
+
+  // Rotation rule: ONLY when the receiving team wins the rally, it wins the serve and rotates clockwise
+  if (scoringTeam !== prevServingTeam) {
+    match.servingTeam = scoringTeam;
+    if (scoringTeam === 'home') {
+      match.rotation.home = match.rotation.home === 1 ? 2 : 1;
+      match.homeServerIndex = (match.homeServerIndex + 1) % match.homePlayers.length;
+    } else {
+      match.rotation.away = match.rotation.away === 1 ? 2 : 1;
+      match.awayServerIndex = (match.awayServerIndex + 1) % match.awayPlayers.length;
+    }
   }
 
   const winner = checkMatchWinner(match.score.home, match.score.away, match.targetPoints);
@@ -421,7 +537,7 @@ export function awardPoint(match, scoringTeam, reasonText = '') {
     match.winner = winner;
     match.phase = 'match_over';
     match.callout = {
-      text: winner === 'home' ? 'SOLARIS WINS THE MATCH!' : 'APEX WINS THE MATCH!',
+      text: winner === 'home' ? `${TEAMS.home.shortName} WINS THE MATCH!` : `${TEAMS.away.shortName} WINS THE MATCH!`,
       color: winner === 'home' ? '#F29F05' : '#7EE3E1',
       timer: 5,
     };
@@ -430,7 +546,7 @@ export function awardPoint(match, scoringTeam, reasonText = '') {
   }
 
   match.phase = 'point_pause';
-  match.pointPauseTimer = 1.15;
+  match.pointPauseTimer = match.aiControlledHome ? 0.05 : 1.1;
 
   const isMatchPoint =
     (match.score.home >= match.targetPoints - 1 && match.score.home > match.score.away) ||
@@ -442,14 +558,13 @@ export function awardPoint(match, scoringTeam, reasonText = '') {
   match.callout = {
     text: `${prefix}POINT ${teamLabel}${suffix}`,
     color: scoringTeam === 'home' ? '#FFB59E' : '#7EE3E1',
-    timer: 1.15,
+    timer: 1.1,
   };
 
   match.events.push({ type: 'point', scoringTeam });
 }
 
 export function stepMatch(match, humanInput, dt) {
-  // Real-time visual timers (particles, shake, feedback) tick even during brief hitstop
   if (match.cameraShake > 0) {
     match.cameraShake = Math.max(0, match.cameraShake - dt * 2.8);
   }
@@ -470,9 +585,7 @@ export function stepMatch(match, humanInput, dt) {
     p.y += p.vy * dt;
   }
 
-  if (match.phase === 'match_over') {
-    return;
-  }
+  if (match.phase === 'match_over') return;
 
   if (match.hitstopTimer > 0) {
     match.hitstopTimer = Math.max(0, match.hitstopTimer - dt);
@@ -480,17 +593,15 @@ export function stepMatch(match, humanInput, dt) {
   }
 
   match.elapsedSeconds += dt;
-
   if (match.touchCooldown > 0) {
     match.touchCooldown = Math.max(0, match.touchCooldown - dt);
   }
 
-  const humanPlayer = match.homePlayers[0];
-  const teammate = match.homePlayers[1];
+  const home0 = match.homePlayers[0];
+  const home1 = match.homePlayers[1];
   const away0 = match.awayPlayers[0];
   const away1 = match.awayPlayers[1];
 
-  // Phase: Point Pause
   if (match.phase === 'point_pause') {
     match.pointPauseTimer -= dt;
     if (match.pointPauseTimer <= 0) {
@@ -499,35 +610,29 @@ export function stepMatch(match, humanInput, dt) {
     return;
   }
 
-  // Phase: Waiting for Serve
   if (match.phase === 'serve_wait') {
     const isHomeServe = match.servingTeam === 'home';
-    const server = isHomeServe
-      ? match.homePlayers[match.homeServerIndex]
-      : match.awayPlayers[match.awayServerIndex];
+    const server = getActiveServer(match);
 
-    // Allow human movement slightly while waiting, keep server anchored until serve
-    if (!isHomeServe || match.homeServerIndex !== 0) {
-      stepPlayerPhysics(humanPlayer, humanInput.moveX, humanInput.jumpPressed, humanInput.jumpHeld, dt, false);
+    if (!match.aiControlledHome) {
+      if (!isHomeServe || server.id !== home0.id) {
+        const waitJump = humanInput.jumpPressed || (humanInput.actionPressed && home0.onGround);
+        stepPlayerPhysics(home0, humanInput.moveX, waitJump, humanInput.jumpHeld || waitJump, dt, false);
+      } else {
+        stepPlayerPhysics(home0, 0, false, false, dt, true);
+      }
     } else {
-      stepPlayerPhysics(humanPlayer, 0, false, false, dt, true);
+      stepPlayerPhysics(home0, 0, false, false, dt, true);
     }
 
-    const mateCtrl = computeTeammateControl(teammate, humanPlayer, match.ball, match);
-    stepPlayerPhysics(teammate, mateCtrl.moveX, false, false, dt, true);
+    const mateCtrl = computeTeammateControl(home1, home0, match.ball, match, match.aiMemories.home1, dt);
+    stepPlayerPhysics(home1, mateCtrl.moveX, false, false, dt, true);
     stepPlayerPhysics(away0, 0, false, false, dt, true);
     stepPlayerPhysics(away1, 0, false, false, dt, true);
 
-    if (isHomeServe) {
-      if (match.homeServerIndex === 0) {
-        if (humanInput.actionPressed || humanInput.receivePressed || humanInput.smashPressed) {
-          executeServe(match, server);
-        }
-      } else {
-        match.aiServeTimer -= dt;
-        if (match.aiServeTimer <= 0) {
-          executeServe(match, server);
-        }
+    if (isHomeServe && !match.aiControlledHome && server.controlledBy === 'human') {
+      if (humanInput.actionPressed || humanInput.receivePressed || humanInput.smashPressed) {
+        executeServe(match, server);
       }
     } else {
       match.aiServeTimer -= dt;
@@ -543,80 +648,148 @@ export function stepMatch(match, humanInput, dt) {
     match.callout.timer = Math.max(0, match.callout.timer - dt);
   }
 
-  // 1. Update Human & AI Players
-  stepPlayerPhysics(humanPlayer, humanInput.moveX, humanInput.jumpPressed, humanInput.jumpHeld, dt);
+  // 1. Update Players
+  let home0AiCtrl = null;
+  if (match.aiControlledHome) {
+    home0AiCtrl = computeTeammateControl(home0, home1, match.ball, match, match.aiMemories.home0, dt, true);
+    stepPlayerPhysics(home0, home0AiCtrl.moveX, home0AiCtrl.jumpPressed, home0AiCtrl.jumpHeld, dt);
+  } else {
+    const receiveProfile = getReceiveProfile(home0.stats);
+    const ownServeHome = match.ball.lastHitType === 'serve' && match.ball.lastHitByTeam === 'home';
+    const ballInReceiveReach =
+      match.touchCooldown <= 0 &&
+      match.ball.x < COURT.NET_X + 26 &&
+      !ownServeHome &&
+      Math.hypot(match.ball.x - home0.x, match.ball.y - (home0.y - 54)) <= 96 + receiveProfile.reachBonus;
+    const spaceJump = humanInput.actionPressed && home0.onGround && !ballInReceiveReach;
+    stepPlayerPhysics(
+      home0,
+      humanInput.moveX,
+      humanInput.jumpPressed || spaceJump,
+      humanInput.jumpHeld || spaceJump,
+      dt
+    );
+  }
 
-  const mateCtrl = computeTeammateControl(teammate, humanPlayer, match.ball, match);
-  stepPlayerPhysics(teammate, mateCtrl.moveX, mateCtrl.jumpPressed, mateCtrl.jumpHeld, dt);
+  const mateCtrl = computeTeammateControl(home1, home0, match.ball, match, match.aiMemories.home1, dt);
+  stepPlayerPhysics(home1, mateCtrl.moveX, mateCtrl.jumpPressed, mateCtrl.jumpHeld, dt);
 
-  const awayCtrl0 = computeOpponentControl(away0, away1, match.ball, match, match.difficulty);
-  const awayCtrl1 = computeOpponentControl(away1, away0, match.ball, match, match.difficulty);
-  stepPlayerPhysics(away0, awayCtrl0.moveX, awayCtrl0.jumpPressed, awayCtrl0.jumpHeld, dt);
-  stepPlayerPhysics(away1, awayCtrl1.moveX, awayCtrl1.jumpPressed, awayCtrl1.jumpHeld, dt);
+  const awayCtrl0 = computeOpponentControl(away0, away1, match.ball, match, match.difficulty, match.aiMemories.away0, dt);
+  const awayCtrl1 = computeOpponentControl(away1, away0, match.ball, match, match.difficulty, match.aiMemories.away1, dt);
+  stepPlayerPhysics(away0, awayCtrl0.moveX, awayCtrl0.jumpPressed, awayCtrl0.jumpHeld, dt, false, awayCtrl0.allowNetLunge);
+  stepPlayerPhysics(away1, awayCtrl1.moveX, awayCtrl1.jumpPressed, awayCtrl1.jumpHeld, dt, false, awayCtrl1.allowNetLunge);
 
-  // 2. Step Ball Physics
+  // Check player net touch fault during rally
+  for (const p of [home0, home1, away0, away1]) {
+    if (p.touchedNet) {
+      awardPoint(match, p.teamId === 'home' ? 'away' : 'home', 'NET TOUCH FAULT!');
+      return;
+    }
+  }
+
+  // 2. Ball Physics
   const { hitFloor, hitNet } = stepBallPhysics(match.ball, dt);
   if (hitNet) {
     match.events.push({ type: 'net' });
-  }
-
-  if (hitFloor) {
-    const bx = match.ball.x;
-    if (bx < COURT.LEFT_X || bx > COURT.RIGHT_X) {
-      // Out of bounds: point to the opposing team of whoever touched last
-      const pointTo = match.ball.lastHitByTeam === 'home' ? 'away' : 'home';
-      awardPoint(match, pointTo, 'OUT!');
-    } else if (bx < COURT.NET_X) {
-      awardPoint(match, 'away');
+    const faultTeam = match.ball.lastHitByTeam || 'home';
+    const pointTo = faultTeam === 'home' ? 'away' : 'home';
+    if (match.ball.lastHitType === 'serve' && match.ball.lastHitById) {
+      match.playerStats[match.ball.lastHitById].serviceErrors += 1;
+      awardPoint(match, pointTo, 'SERVICE ERROR (NET)!');
     } else {
-      awardPoint(match, 'home');
+      awardPoint(match, pointTo, 'NET FAULT!');
     }
     return;
   }
 
-  // 3. Check Net Blocks (both human at net and AI blockers)
-  for (const p of [humanPlayer, away0, away1]) {
+  if (hitFloor) {
+    const bx = match.ball.x;
+    const isServe = match.ball.lastHitType === 'serve';
+    const lastTeam = match.ball.lastHitByTeam;
+    const lastPlayerId = match.ball.lastHitById;
+
+    if (isServe) {
+      const landedInOppCourt =
+        lastTeam === 'home'
+          ? bx >= COURT.NET_X && bx <= COURT.RIGHT_X
+          : bx >= COURT.LEFT_X && bx < COURT.NET_X;
+
+      if (landedInOppCourt) {
+        if (lastPlayerId) match.playerStats[lastPlayerId].aces += 1;
+        awardPoint(match, lastTeam, 'ACE!', lastPlayerId);
+      } else {
+        if (lastPlayerId) match.playerStats[lastPlayerId].serviceErrors += 1;
+        awardPoint(match, lastTeam === 'home' ? 'away' : 'home', 'SERVICE ERROR!');
+      }
+      return;
+    }
+
+    if (bx < COURT.LEFT_X || bx > COURT.RIGHT_X) {
+      const pointTo = lastTeam === 'home' ? 'away' : 'home';
+      awardPoint(match, pointTo, 'OUT!');
+    } else if (bx < COURT.NET_X) {
+      awardPoint(match, 'away', '', lastTeam === 'away' ? lastPlayerId : null);
+    } else {
+      awardPoint(match, 'home', '', lastTeam === 'home' ? lastPlayerId : null);
+    }
+    return;
+  }
+
+  // 3. Net Blocks
+  for (const p of [home0, home1, away0, away1]) {
     if (tryBlockCollision(match, p)) {
       return;
     }
   }
 
-  // 4. Human Action Handling (Contextual Spacebar OR explicit Smash / Receive buttons)
+  // 4. Home Player 0 Action (Human OR AI-vs-AI)
   const ball = match.ball;
   const ownServeInFlightHome = ball.lastHitType === 'serve' && ball.lastHitByTeam === 'home';
+
   if (match.touchCooldown <= 0 && ball.x < COURT.NET_X + 26 && !ownServeInFlightHome) {
-    const receiveProfile = getReceiveProfile(humanPlayer.stats);
-    const smashProfile = getSmashProfile(humanPlayer.stats);
-
-    const wantSmash = humanInput.smashPressed || (humanInput.actionPressed && !humanPlayer.onGround);
-    const wantReceive = humanInput.receivePressed || (humanInput.actionPressed && humanPlayer.onGround);
-
-    if (wantSmash && !humanPlayer.onGround) {
-      const dist = Math.hypot(ball.x - humanPlayer.x, ball.y - (humanPlayer.y - 84));
-      if (dist <= 98 + smashProfile.perfectWindowBonus) {
-        executeSmash(match, humanPlayer);
+    if (match.aiControlledHome && home0AiCtrl) {
+      if (home0AiCtrl.wantSmash && !home0.onGround && Math.hypot(ball.x - home0.x, ball.y - (home0.y - 84)) <= 92) {
+        executeSmash(match, home0);
         return;
       }
-    }
-
-    if (wantReceive) {
-      const dist = Math.hypot(ball.x - humanPlayer.x, ball.y - (humanPlayer.y - 54));
-      if (dist <= 96 + receiveProfile.reachBonus) {
-        executeReceiveOrAutoFeed(match, humanPlayer, false);
+      if (home0AiCtrl.wantAction && Math.hypot(ball.x - home0.x, ball.y - (home0.y - 54)) <= 94) {
+        executeReceiveOrAutoFeed(match, home0, match.sideTouches === 1);
         return;
+      }
+    } else {
+      const receiveProfile = getReceiveProfile(home0.stats);
+      const smashProfile = getSmashProfile(home0.stats);
+
+      const wantSmash = humanInput.smashPressed || (humanInput.actionPressed && !home0.onGround);
+      const wantReceive = humanInput.receivePressed || (humanInput.actionPressed && home0.onGround);
+
+      if (wantSmash && !home0.onGround) {
+        const dist = Math.hypot(ball.x - home0.x, ball.y - (home0.y - 84));
+        if (dist <= 98 + smashProfile.perfectWindowBonus) {
+          executeSmash(match, home0);
+          return;
+        }
+      }
+
+      if (wantReceive) {
+        const dist = Math.hypot(ball.x - home0.x, ball.y - (home0.y - 54));
+        if (dist <= 96 + receiveProfile.reachBonus) {
+          executeReceiveOrAutoFeed(match, home0, false);
+          return;
+        }
       }
     }
   }
 
-  // 5. Teammate AI Auto-Receive / Auto-Feed
+  // 5. Home Teammate AI
   if (match.touchCooldown <= 0 && mateCtrl.wantAction && ball.x < COURT.NET_X && !ownServeInFlightHome) {
-    if (match.lastTouchingPlayerId !== teammate.id || match.possessionSide !== 'home') {
-      executeReceiveOrAutoFeed(match, teammate, match.sideTouches === 1);
+    if (!isDoubleTouch(match, home1)) {
+      executeReceiveOrAutoFeed(match, home1, match.sideTouches === 1);
       return;
     }
   }
 
-  // 6. Opponent AI Receive / Set / Smash
+  // 6. Opponent AI
   const ownServeInFlightAway = ball.lastHitType === 'serve' && ball.lastHitByTeam === 'away';
   if (match.touchCooldown <= 0 && ball.x >= COURT.NET_X - 18 && !ownServeInFlightAway) {
     const pairs = [
@@ -624,9 +797,7 @@ export function stepMatch(match, humanInput, dt) {
       { player: away1, ctrl: awayCtrl1 },
     ];
     for (const { player, ctrl } of pairs) {
-      if (match.possessionSide === 'away' && match.lastTouchingPlayerId === player.id) {
-        continue;
-      }
+      if (isDoubleTouch(match, player)) continue;
       if (ctrl.wantSmash && !player.onGround) {
         const dist = Math.hypot(ball.x - player.x, ball.y - (player.y - 84));
         if (dist <= 92) {
@@ -636,7 +807,7 @@ export function stepMatch(match, humanInput, dt) {
       }
       if (ctrl.wantReceive) {
         const dist = Math.hypot(ball.x - player.x, ball.y - (player.y - 54));
-        if (dist <= 90) {
+        if (dist <= 94) {
           executeReceiveOrAutoFeed(match, player, match.sideTouches === 1);
           return;
         }

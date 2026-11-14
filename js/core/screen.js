@@ -4,6 +4,7 @@ export function createScreenManager() {
   const screens = {
     menu: document.getElementById('screen-menu'),
     settings: document.getElementById('screen-settings'),
+    records: document.getElementById('screen-records'),
     match: document.getElementById('screen-match'),
   };
   const modals = {
@@ -25,6 +26,7 @@ export function createScreenManager() {
 
     if (name === 'menu') document.body.dataset.state = 'title';
     else if (name === 'settings') document.body.dataset.state = 'settings';
+    else if (name === 'records') document.body.dataset.state = 'records';
     else if (name === 'match') document.body.dataset.state = 'playing';
   }
 

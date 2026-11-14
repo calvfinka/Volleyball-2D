@@ -1,0 +1,50 @@
+:root{
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{
+  margin:0;height:100%;background:#06182b;overflow:hidden;
+  overscroll-behavior:none;touch-action:none;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+#wadah{position:fixed;inset:0;padding:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l)}
+#kanvas{position:absolute;inset:0;margin:auto;display:block;touch-action:none}
+.tersembunyi{display:none!important}
+
+#putar{position:fixed;inset:0;background:#06182b;color:#fff;display:flex;align-items:center;justify-content:center;z-index:50;text-align:center;padding:24px}
+#putar .kartu-putar{font-size:56px;line-height:1.2}
+#putar p{font-size:18px;margin:12px 0 0}
+
+#sentuh{position:absolute;inset:0;pointer-events:none;z-index:20}
+#joy{
+  position:absolute;left:calc(22px + var(--safe-l));bottom:calc(22px + var(--safe-b));
+  width:150px;height:150px;border-radius:50%;
+  background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.3);
+  pointer-events:auto;touch-action:none;
+}
+#joy-knob{
+  position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;
+  border-radius:50%;background:rgba(255,255,255,.35);pointer-events:none;
+}
+#tombol-kanan{
+  position:absolute;right:calc(20px + var(--safe-r));bottom:calc(20px + var(--safe-b));
+  display:grid;grid-template-columns:1fr 1fr;gap:12px;pointer-events:auto;
+}
+#tombol-kanan button{
+  width:112px;height:72px;border-radius:20px;font-size:17px;font-weight:700;color:#fff;
+  background:rgba(20,60,110,.55);border:2px solid rgba(255,255,255,.35);touch-action:none;
+  font-family:inherit;
+}
+#tombol-kanan button.tekan{background:rgba(255,160,40,.85)}
+#tombol-kanan button[data-aksi="lompat"]{grid-column:1 / span 2;width:100%}
+
+@media (max-height:500px){
+  #joy{width:118px;height:118px;bottom:calc(12px + var(--safe-b))}
+  #joy-knob{width:50px;height:50px;margin:-25px 0 0 -25px}
+  #tombol-kanan{gap:8px;bottom:calc(12px + var(--safe-b));right:calc(12px + var(--safe-r))}
+  #tombol-kanan button{width:96px;height:56px;font-size:15px;border-radius:16px}
+}

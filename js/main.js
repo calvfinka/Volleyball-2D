@@ -1,69 +1,86 @@
-import { muat, simpan, hapus } from './inti/simpan.js';
-import { buatAcak } from './inti/acak.js';
-import { sekarang } from './inti/waktu.js';
-import { K } from './inti/konfigurasi.js';
-import { buatSkuadAwal, lengkapiPemain } from './sistem/pemain.js';
-import { buatManajer } from './sistem/manajer.js';
-import { buatMusim, kejar } from './sistem/musim.js';
-import { kekuatanTim, timSaya } from './sistem/pertandingan.js';
-import { renderTim } from './layar/tim.js';
-import { prosesWaktu } from './sistem/pasar.js';
-import { bersihkanSusunan } from './sistem/taktik.js';
-import { renderBeranda } from './layar/klub.js';
-import { renderLiga } from './layar/kompetisi.js';
-import { ikon, LOGO } from './layar/gambar.js';
-import { siapkanSprite } from './layar/sprite.js';
-import { renderSkuad } from './layar/skuad.js';
-import { renderPertandingan, lepasPilihan } from './layar/pertandingan.js';
-import { lengkapiKlub, pastikanKontrak } from './sistem/klub.js';
-import { renderProfil } from './layar/profil.js';
+// Bootstrap: canvas 1280x720 diskalakan memenuhi layar, orientasi landscape, dan loop utama.
+import { K } from './inti/konstanta.js';
+import { mulaiLoop } from './inti/loop.js';
+import { layar } from './inti/layar.js';
+import { input, pasangSentuh } from './inti/input.js';
+import { pengaturan } from './inti/simpan.js';
+import { setSuara } from './inti/audio.js';
+import { buatMenu } from './layar/menu.js';
+import { buatPengaturan } from './layar/pengaturan.js';
+import { buatLayarLaga } from './layar/laga.js';
 
-function gameBaru() {
-  const now = sekarang(), acak = buatAcak(now & 0x7fffffff);
-  const neg = localStorage.getItem('vm-negara') || 'ID', { skuad, susunan } = buatSkuadAwal(acak, now, K.skuadAwal.tingkat, neg);
-  return { versi: 2, koin: K.skuadAwal.koin, skuad, susunan, dibuat: now, manajer: buatManajer(now), pengaturan: { animasiCepat: false }, taktik: { formasi: '5-1', gaya: 'seimbang' }, negara: neg, musim: buatMusim(1, K.manajer.timAwal, now, neg) };
+const kanvas = document.getElementById('kanvas');
+const ctx = kanvas.getContext('2d');
+const elPutar = document.getElementById('putar');
+const elSentuh = document.getElementById('sentuh');
+const elBtnTerima = document.getElementById('btn-terima');
+const adaSentuh = matchMedia('(pointer: coarse)').matches;
+
+kanvas.width = K.LEBAR;
+kanvas.height = K.TINGGI;
+setSuara(pengaturan.suara);
+
+// Navigasi antar layar. Diisi setelah layar dibuat agar bisa saling memanggil.
+const nav = {};
+const menu = buatMenu(nav);
+const peng = buatPengaturan(nav);
+const laga = buatLayarLaga(nav);
+Object.assign(nav, {
+  menu: () => layar.ganti(menu),
+  laga: () => layar.ganti(laga),
+  pengaturan: () => layar.ganti(peng),
+});
+
+// Ukuran canvas mengikuti rasio 16:9 dan memenuhi layar.
+function fitKanvas() {
+  const s = Math.min(innerWidth / K.LEBAR, innerHeight / K.TINGGI);
+  kanvas.style.width = `${K.LEBAR * s}px`;
+  kanvas.style.height = `${K.TINGGI * s}px`;
 }
-// Data lama (sebelum profil ditambahkan) dilengkapi otomatis, tanpa mengulang permainan.
-function lengkapi(S) {
-  const now = sekarang();
-  S.manajer ??= buatManajer(now);
-  S.pengaturan ??= { animasiCepat: false };
-  S.fasilitas ??= { latihan: 0, medis: 0, stadion: 0, bangun: null };
-  S.latihan ??= null; S.pasar ??= null;
-  S.taktik ??= { formasi: '5-1', gaya: 'seimbang' };
-  S.musim ??= buatMusim(1, S.manajer.tim, now);
-  S.skuad.forEach(p => lengkapiPemain(p, now));
-  S.musim.liga ??= 0; S.musim.neg ??= 'ID'; lengkapiKlub(S); pastikanKontrak(S);
-  return S;
+
+// Klik atau sentuhan pada canvas dikonversi ke koordinat logis.
+kanvas.addEventListener('pointerdown', (e) => {
+  const r = kanvas.getBoundingClientRect();
+  input.pushTap(((e.clientX - r.left) / r.width) * K.LEBAR, ((e.clientY - r.top) / r.height) * K.TINGGI);
+});
+
+// Layar portrait: tampilkan pesan putar dan jeda permainan.
+function cekPutar() {
+  const potret = innerHeight > innerWidth;
+  elPutar.classList.toggle('tersembunyi', !potret);
+  return potret;
 }
-let S = lengkapi(muat() ?? gameBaru());
-simpan(S);
 
-const $ = s => document.querySelector(s), layar = $('#layar');
-const aksi = {
-  simpan: () => simpan(S),
-  perbaruiKoin: () => { $('#koin').innerHTML = ikon('koin', 26) + '<span>' + S.koin + '</span>'; },
-  pindah: n => tampil(n),
-  reset: () => { if (confirm('Mulai dari awal? Semua data manajer dan pemain akan hilang.')) { hapus(); location.reload(); } }
-};
-const NAMA_TAB = { beranda: 'Beranda', liga: 'Kompetisi', tim: 'Tim', tanding: 'Laga', profil: 'Profil' };
-const TAB = { beranda: ['rumah', renderBeranda], liga: ['trofi', renderLiga], tim: ['skuad', renderTim], tanding: ['jaring', renderPertandingan], profil: ['orang', renderProfil] };
+// Coba fullscreen dan kunci landscape pada sentuhan pertama (butuh gestur pengguna).
+let fsDicoba = false;
+window.addEventListener('pointerdown', () => {
+  if (fsDicoba) return;
+  fsDicoba = true;
+  const el = document.documentElement;
+  const req = el.requestFullscreen ? el.requestFullscreen() : Promise.reject(new Error('no fullscreen'));
+  req.then(() => screen.orientation?.lock?.('landscape')).catch(() => { /* fallback: overlay putar */ });
+}, { once: true });
 
-$('#logo').innerHTML = `<img src="${LOGO}" alt="" height="36" draggable="false">`;
-siapkanSprite();
-$('#reset').innerHTML = ikon('hapus', 22);
-$('#reset').onclick = aksi.reset;
-$('#nav').innerHTML = Object.entries(TAB).map(([k, [ik]]) => `<button data-tab="${k}" aria-label="${k}">${ikon(ik, 24)}<span>${NAMA_TAB[k]}</span></button>`).join('');
-$('#nav').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) tampil(b.dataset.tab); };
+// Cegah zoom, menu konteks, dan scroll.
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
-function tampil(nama) {
-  lepasPilihan();
-  layar.dataset.layar = nama;
-  document.querySelectorAll('#nav button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === nama));
-  if (nama !== 'tanding') { const t = sekarang(); prosesWaktu(S, t); bersihkanSusunan(S, t); if (kejar(S, t, kekuatanTim(timSaya({ skuad: S.skuad, susunan: S.susunan }), t, S.taktik))) { simpan(S); aksi.perbaruiKoin(); } }
-  pastikanKontrak(S);
-  TAB[nama][1](layar, S, aksi);
-  layar.scrollTop = 0;
-}
-aksi.perbaruiKoin();
-tampil('beranda');
+window.addEventListener('resize', () => { fitKanvas(); cekPutar(); });
+fitKanvas();
+pasangSentuh();
+layar.ganti(menu);
+
+let labelSekarang = '';
+mulaiLoop(
+  (dt) => { if (!cekPutar()) layar.update(dt); },
+  () => {
+    layar.render(ctx);
+    const aktif = layar.aktif;
+    elSentuh.classList.toggle('tersembunyi', !(adaSentuh && aktif?.nama === 'laga'));
+    if (aktif?.labelTerima) {
+      const lbl = aktif.labelTerima();
+      if (lbl !== labelSekarang) { labelSekarang = lbl; elBtnTerima.textContent = lbl; }
+    }
+  },
+);
